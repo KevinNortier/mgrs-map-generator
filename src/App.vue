@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, shallowRef, computed, watch } from 'vue'
 import { LngLatBounds, Map, Marker, NavigationControl, ScaleControl, type GeoJSONSource } from 'maplibre-gl'
-import { applyPalette, buildStyle, marshPattern, LAYER_GROUPS, MAP_STYLES, type LayerGroup, type MapStyleId } from './map/style'
+import { ALL_LAYERS, applyPalette, buildStyle, marshPattern, LAYER_GROUPS, MAP_STYLES, type LayerGroup, type MapStyleId } from './map/style'
 import { buildGrid, mgrsAt, spacingForZoom } from './mgrs/grid'
 import SheetPreview from './ui/SheetPreview.vue'
 import PanelSection from './ui/PanelSection.vue'
@@ -41,7 +41,8 @@ const map = shallowRef<Map>()
 let mapLoaded = false
 const marker = new Marker({ color: '#c8352a' })
 
-const layers = reactive<Record<LayerGroup, boolean>>({ hillshade: true, contours: true, grid: true, sheet: true })
+// The print area toggle is screen-only; the other layers belong to the sheet (saved and printed).
+const showPrintArea = ref(true)
 const cursor = ref<string | null>(null)
 const picked = ref<[number, number] | null>(null)
 const digits = ref<Digits>(8)
@@ -59,8 +60,11 @@ const sheet = reactive<Sheet>(
     center: DEFAULT_CENTER,
     example: { ...DEFAULT_EXAMPLE },
     style: 'military',
+    layers: { ...ALL_LAYERS },
   }),
 )
+
+const layers = computed<Record<LayerGroup, boolean>>(() => ({ ...sheet.layers, sheet: showPrintArea.value }))
 
 const palette = computed(() => MAP_STYLES[sheet.style].palette)
 watch(
@@ -107,7 +111,7 @@ function createExampleElement() {
 function updateExampleMarker() {
   const m = map.value
   const { mode, point } = sheet.example
-  if (m && mode === 'custom' && point && layers.sheet) exampleMarker.setLngLat(point).addTo(m)
+  if (m && mode === 'custom' && point && showPrintArea.value) exampleMarker.setLngLat(point).addTo(m)
   else exampleMarker.remove()
 }
 
@@ -161,14 +165,23 @@ function updateSheet() {
 watch(sheet, updateSheet, { deep: true })
 
 function setLayerGroup(group: LayerGroup, visible: boolean) {
-  layers[group] = visible
-  for (const id of LAYER_GROUPS[group]) map.value?.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
-  if (group === 'sheet' && map.value) {
-    if (visible) handle.addTo(map.value)
-    else handle.remove()
-    updateExampleMarker()
-  }
+  if (group === 'sheet') showPrintArea.value = visible
+  else sheet.layers[group] = visible
 }
+
+/** Shows or hides the map layers to match the toggles, e.g. after opening a saved map. */
+function applyLayers() {
+  const m = map.value
+  if (!m || !mapLoaded) return
+  for (const group of Object.keys(LAYER_GROUPS) as LayerGroup[]) {
+    for (const id of LAYER_GROUPS[group]) m.setLayoutProperty(id, 'visibility', layers.value[group] ? 'visible' : 'none')
+  }
+  if (showPrintArea.value) handle.addTo(m)
+  else handle.remove()
+  updateExampleMarker()
+}
+
+watch(layers, applyLayers)
 
 function layerLabel(group: LayerGroup) {
   switch (group) {
@@ -196,8 +209,8 @@ function zoomToSheet() {
 const sheetSummary = computed(() => `${sheet.paper.toUpperCase()} ${sheet.orientation} · ${formatScale(sheet.scale)}`)
 const exampleSummary = computed(() => EXAMPLE_MODES.find((o) => o.mode === sheet.example.mode)?.label ?? null)
 const layersSummary = computed(() => {
-  const on = (Object.keys(layers) as LayerGroup[]).filter((g) => layers[g]).length
-  return `${MAP_STYLES[sheet.style].label} · ${on} of ${Object.keys(layers).length} on`
+  const on = (Object.keys(layers.value) as LayerGroup[]).filter((g) => layers.value[g]).length
+  return `${MAP_STYLES[sheet.style].label} · ${on} of ${Object.keys(layers.value).length} on`
 })
 
 const pickedOnSheet = computed(() => !!picked.value && isOnSheet(sheet, picked.value))
@@ -339,7 +352,8 @@ onMounted(() => {
     if (!hadSheetInHash) centerSheetOnView()
     updateGrid()
     updateSheet()
-    handle.setLngLat(sheet.center).addTo(m)
+    handle.setLngLat(sheet.center)
+    applyLayers()
     if (hadSheetInHash && !hadMapInHash) zoomToSheet()
   })
   m.on('moveend', updateGrid)

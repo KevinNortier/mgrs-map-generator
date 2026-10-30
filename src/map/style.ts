@@ -398,14 +398,17 @@ export interface StyleOptions {
    * Print rendering: fixed contour interval, and no screen-only layers. The grid and the sheet
    * frame are drawn as vector graphics on the printed sheet instead (see ../print/sheet-svg.ts).
    */
-  print?: { contourInterval: number }
+  print?: { contourInterval: number; layers: SheetLayers }
 }
 
 export function buildStyle(p: Palette, options: StyleOptions = {}): StyleSpecification {
   const style = baseStyle(p, options.print?.contourInterval)
   if (options.print) {
-    const screenOnly = new Set<string>([...LAYER_GROUPS.grid, ...LAYER_GROUPS.sheet])
-    style.layers = style.layers.filter((l) => !screenOnly.has(l.id))
+    const { layers } = options.print
+    const omit = new Set<string>([...LAYER_GROUPS.grid, ...LAYER_GROUPS.sheet])
+    if (!layers.hillshade) LAYER_GROUPS.hillshade.forEach((id) => omit.add(id))
+    if (!layers.contours) LAYER_GROUPS.contours.forEach((id) => omit.add(id))
+    style.layers = style.layers.filter((l) => !omit.has(l.id))
   }
   return style
 }
@@ -418,6 +421,13 @@ export const LAYER_GROUPS = {
 } as const
 
 export type LayerGroup = keyof typeof LAYER_GROUPS
+
+/** Layer groups that belong to a sheet: saved with it and followed in print. The print area is screen-only. */
+export const SHEET_LAYER_GROUPS = ['hillshade', 'contours', 'grid'] as const
+export type SheetLayerGroup = (typeof SHEET_LAYER_GROUPS)[number]
+export type SheetLayers = Record<SheetLayerGroup, boolean>
+
+export const ALL_LAYERS: SheetLayers = { hillshade: true, contours: true, grid: true }
 
 /**
  * Recolours a live map to another palette. Only paint properties change, so runtime state

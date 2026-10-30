@@ -1,5 +1,5 @@
 import { forward as toMgrs } from 'mgrs'
-import type { Palette } from '../map/style'
+import type { Palette, SheetLayers } from '../map/style'
 import { formatMgrs } from '../mgrs/grid'
 import { formatAngle, northInfo, type NorthInfo } from './north'
 import { resolveExample, type ResolvedExample } from './example'
@@ -43,6 +43,8 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
   const grid = sheetGrid(sheet)
   const north = northInfo(sheet, date)
   const example = resolveExample(sheet, sheet.example)
+  // Switched-off layers are left out: the grid and its labels, contour legend entries and notes.
+  const { layers } = sheet
   const parts: string[] = []
 
   // Map image, clipped to the neatline
@@ -60,14 +62,14 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
     parts.push(text(frame.x + frame.width / 2, frame.y + frame.height / 2, 'Rendering map…', 4, `text-anchor="middle" fill="#888"`))
   }
 
-  parts.push(renderGrid(sheet, layout, grid))
+  if (layers.grid) parts.push(renderGrid(sheet, layout, grid))
   if (example) parts.push(renderExampleMarker(example, sheet, layout, grid))
   parts.push(`<rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" fill="none" stroke="${INK}" stroke-width="0.35"/>`)
 
   parts.push(renderHeader(sheet, layout, grid))
   for (const box of layout.blocks) {
-    if (box.id === 'legend') parts.push(renderLegend(box, palette))
-    if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, grid.zone, grid.south))
+    if (box.id === 'legend') parts.push(renderLegend(box, palette, layers))
+    if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, grid.zone, grid.south, layers.contours))
     if (box.id === 'north') parts.push(renderNorth(box, north))
     if (box.id === 'gridref') parts.push(renderGridRef(box, sheet, grid, example))
   }
@@ -230,7 +232,7 @@ function blockTitle(box: Box, label: string) {
   return text(box.x, box.y + 2.6, label, 2.4, 'font-weight="bold" letter-spacing="0.15"')
 }
 
-function renderLegend(box: Box, p: Palette) {
+function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
   type Item = { label: string; draw: (x: number, y: number, w: number, h: number) => string }
   const area = (fill: string, stroke = 'none') => (x: number, y: number, w: number, h: number) =>
     `<rect x="${f(x)}" y="${f(y)}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke === 'none' ? '#999' : stroke}" stroke-width="0.1"/>`
@@ -264,9 +266,13 @@ function renderLegend(box: Box, p: Palette) {
     { label: 'Track', draw: stroke(p.track, 0.25, 'stroke-dasharray="1.2 0.6"') },
     { label: 'Path', draw: stroke(p.track, 0.2, 'stroke-dasharray="0.3 0.6"') },
     { label: 'Railway', draw: stroke(p.track, 0.4) },
-    { label: 'Contour', draw: stroke(p.contour, 0.15) },
-    { label: 'Index contour', draw: stroke(p.contour, 0.35) },
-    { label: 'Grid line (MGRS)', draw: stroke(INK, 0.15) },
+    ...(layers.contours
+      ? [
+          { label: 'Contour', draw: stroke(p.contour, 0.15) },
+          { label: 'Index contour', draw: stroke(p.contour, 0.35) },
+        ]
+      : []),
+    ...(layers.grid ? [{ label: 'Grid line (MGRS)', draw: stroke(INK, 0.15) }] : []),
   ]
 
   const out = [blockTitle(box, 'LEGEND')]
@@ -285,7 +291,7 @@ function renderLegend(box: Box, p: Palette) {
   return out.join('')
 }
 
-function renderScaleBlock(box: Box, sheet: Sheet, zone: number, south: boolean) {
+function renderScaleBlock(box: Box, sheet: Sheet, zone: number, south: boolean, contours: boolean) {
   const out = [text(box.x + box.width / 2, box.y + 3.2, `SCALE ${formatScale(sheet.scale)}`, 3.4, 'text-anchor="middle" font-weight="bold"')]
 
   // Scale bar: one subdivided unit to the left of zero, two whole units to the right. 1 unit = 20 mm.
@@ -311,14 +317,18 @@ function renderScaleBlock(box: Box, sheet: Sheet, zone: number, south: boolean) 
   for (const [x, l] of labels) out.push(text(x, y0 + barH + 2.4, l, 2, 'text-anchor="middle"'))
   out.push(text(box.x + box.width / 2, y0 + barH + 5.2, km ? 'KILOMETRES' : 'METRES', 1.9, 'text-anchor="middle" letter-spacing="0.2"'))
 
+  // The contour lines (first one bold) are left out when contours are switched off.
+  const contourNotes = contours ? [`CONTOUR INTERVAL ${CONTOUR_INTERVAL[sheet.scale]} METRES`, 'Elevations in metres above mean sea level'] : []
   const notes = [
-    `CONTOUR INTERVAL ${CONTOUR_INTERVAL[sheet.scale]} METRES`,
-    'Elevations in metres above mean sea level',
+    ...contourNotes,
     'Horizontal datum: World Geodetic System 1984 (WGS 84)',
     `Projection: Universal Transverse Mercator, zone ${zone}${south ? 'S' : 'N'}`,
     `Grid: ${GRID_SPACING[sheet.scale] >= 1000 ? '1 kilometre' : '100 metre'} UTM grid, MGRS references`,
   ]
-  notes.forEach((n, i) => out.push(text(box.x + box.width / 2, y0 + barH + 10 + i * 2.9, n, i === 0 ? 2.2 : 1.9, `text-anchor="middle"${i === 0 ? ' font-weight="bold"' : ''}`)))
+  notes.forEach((n, i) => {
+    const bold = contours && i === 0
+    out.push(text(box.x + box.width / 2, y0 + barH + 10 + i * 2.9, n, bold ? 2.2 : 1.9, `text-anchor="middle"${bold ? ' font-weight="bold"' : ''}`))
+  })
   return out.join('')
 }
 

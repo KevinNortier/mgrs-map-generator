@@ -98,7 +98,7 @@ export async function renderMapImage(
 
   const map = new Map({
     container,
-    style: buildStyle(palette, { print: { contourInterval: CONTOUR_INTERVAL[sheet.scale] } }),
+    style: buildStyle(palette, { print: { contourInterval: CONTOUR_INTERVAL[sheet.scale], layers: sheet.layers } }),
     center,
     zoom,
     bearing,

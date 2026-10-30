@@ -1,3 +1,4 @@
+import { ALL_LAYERS, SHEET_LAYER_GROUPS, type SheetLayers } from '../map/style'
 import { DEFAULT_EXAMPLE, type ExampleSetting } from './example'
 import { PAPERS, SCALES, type Orientation, type Paper, type Scale, type Sheet } from './sheet'
 
@@ -32,6 +33,12 @@ function parseExample(v: unknown): ExampleSetting {
   return { mode, point: parsePoint(o.point), name: typeof o.name === 'string' ? o.name.slice(0, 40) : '' }
 }
 
+/** Layers missing from older saves are on. */
+function parseLayers(v: unknown): SheetLayers {
+  const o = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>
+  return Object.fromEntries(SHEET_LAYER_GROUPS.map((g) => [g, typeof o[g] === 'boolean' ? o[g] : ALL_LAYERS[g]])) as SheetLayers
+}
+
 /**
  * Validates a sheet from storage or a file, field by field. Returns null when the
  * essentials (paper, scale, centre) are unusable; optional fields fall back to defaults.
@@ -49,6 +56,7 @@ export function parseSheet(v: unknown): Sheet | null {
     center,
     example: parseExample(o.example),
     style: o.style === 'orienteering' ? 'orienteering' : 'military',
+    layers: parseLayers(o.layers),
   }
 }
 

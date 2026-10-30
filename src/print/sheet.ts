@@ -1,7 +1,7 @@
 import type { FeatureCollection, Position } from 'geojson'
 import { utm, zoneFor } from '../mgrs/grid'
 import { decodeExample, encodeExample, type ExampleSetting } from './example'
-import type { MapStyleId } from '../map/style'
+import { SHEET_LAYER_GROUPS, type MapStyleId, type SheetLayers } from '../map/style'
 
 export type Paper = 'a4' | 'a3'
 export type Orientation = 'portrait' | 'landscape'
@@ -18,6 +18,8 @@ export interface Sheet {
   example: ExampleSetting
   /** Map style, on screen and in print. */
   style: MapStyleId
+  /** Hillshade, contours and grid on or off, on screen and in print. */
+  layers: SheetLayers
 }
 
 export const PAPERS: Record<Paper, { width: number; height: number }> = {
@@ -175,6 +177,12 @@ function decodeText(encoded: string) {
   }
 }
 
+/** `hide=hillshade,contours` → layers with those groups off. */
+function decodeHidden(value: string): SheetLayers {
+  const hidden = value.split(',')
+  return Object.fromEntries(SHEET_LAYER_GROUPS.map((g) => [g, !hidden.includes(g)])) as SheetLayers
+}
+
 export function readSheetFromHash(fallback: Sheet): Sheet {
   const params = new URLSearchParams(location.hash.slice(1))
   const [paper, orientation, scale] = (params.get('sheet') ?? '').split('-')
@@ -188,6 +196,7 @@ export function readSheetFromHash(fallback: Sheet): Sheet {
     center: Number.isFinite(lat) && Number.isFinite(lon) && params.has('at') ? [lon, lat] : fallback.center,
     example: params.has('ex') ? decodeExample(params.get('ex'), decodeText) : fallback.example,
     style: params.get('style') === 'orienteering' ? 'orienteering' : fallback.style,
+    layers: params.has('hide') ? decodeHidden(params.get('hide')!) : fallback.layers,
   }
 }
 
@@ -202,6 +211,9 @@ export function writeSheetToHash(sheet: Sheet) {
   else params.delete('ex')
   if (sheet.style !== 'military') params.set('style', sheet.style)
   else params.delete('style')
+  const hidden = SHEET_LAYER_GROUPS.filter((g) => !sheet.layers[g])
+  if (hidden.length) params.set('hide', hidden.join(','))
+  else params.delete('hide')
   // Keep the hash readable: MapLibre's own entry uses literal slashes.
   history.replaceState(history.state, '', `#${decodeURIComponent(params.toString())}`)
 }

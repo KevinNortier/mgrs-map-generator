@@ -20,12 +20,14 @@ orienteering and land navigation training. It is a static site: no backend, data
 
 **Export**
 - Sheet preview
+- Print follows the Layers toggles: switching off hillshade, contours or the MGRS grid leaves them (and their legend entries and notes) off the sheet
 - PDF at exact scale: the page is the paper size, the map is rendered at 300 DPI and placed at its exact frame size, and the grid and margin graphics are vectors on top
 - PNG of the whole sheet at 300 DPI, tagged with its resolution
 - Large sheets are rendered in parts when they exceed the graphics card's canvas limit
 
 **Save and share**
 - All sheet settings live in the URL, e.g. `#map=12/59.33/18.07&sheet=a4-landscape-25000&at=59.33,18.07`, so a link reproduces the sheet; **Copy link** copies it
+- The sheet includes its map style and which of hillshade, contours and the grid are on (`hide=contours,grid` in the URL); the print area toggle is screen-only
 - **My maps**: named sheets saved in this browser (open, update, save as new, delete)
 - Download a sheet as a `.json` file and open it again, e.g. on another computer; files are validated on load
 
