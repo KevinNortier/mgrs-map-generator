@@ -8,6 +8,7 @@ orienteering and land navigation training. It is a static site: no backend, data
 **Map**
 - Military topo style: forest, open ground, farmland, marsh, water, built-up areas, buildings, roads, tracks, railways and place names
 - Contours (index contour every 5th line, labelled) and subtle hillshade
+- Two map styles, on screen and in print: **Military topo** (green forest) and **Orienteering** (ISOM-like: white runnable forest, yellow open land)
 - MGRS grid that adapts to zoom (100 km / 10 km / 1 km / 100 m), with zone boundaries and 100 km square IDs; correct across UTM zones, including the Norway (32V) and Svalbard exceptions
 - Live cursor coordinate, and click to read a coordinate at 4, 6, 8 or 10 figures with copy
 
@@ -54,7 +55,7 @@ Titles in other scripts would need an embedded font.
 
 | Path | Purpose |
 |---|---|
-| `src/map/style.ts` | Map style, palettes and layer groups |
+| `src/map/style.ts` | Map style, military and orienteering palettes, live recolouring, layer groups |
 | `src/terrain/dem.ts` | Elevation source; contours (maplibre-contour) and hillshade |
 | `src/mgrs/grid.ts` | MGRS grid generation per UTM zone, zone lookup, reference formatting |
 | `src/print/sheet.ts` | Sheet model: paper, scale, layout of frame and margin blocks, grid-aligned frame, URL-hash state |

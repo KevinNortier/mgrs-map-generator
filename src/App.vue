@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, shallowRef, computed, watch } from 'vue'
 import { LngLatBounds, Map, Marker, NavigationControl, ScaleControl, type GeoJSONSource } from 'maplibre-gl'
-import { buildStyle, militaryPalette, marshPattern, LAYER_GROUPS, type LayerGroup } from './map/style'
+import { applyPalette, buildStyle, marshPattern, LAYER_GROUPS, MAP_STYLES, type LayerGroup, type MapStyleId } from './map/style'
 import { buildGrid, mgrsAt, spacingForZoom } from './mgrs/grid'
 import SheetPreview from './ui/SheetPreview.vue'
 import PanelSection from './ui/PanelSection.vue'
@@ -47,7 +47,16 @@ const sheet = reactive<Sheet>(
     scale: 25_000,
     center: DEFAULT_CENTER,
     example: { ...DEFAULT_EXAMPLE },
+    style: 'military',
   }),
+)
+
+const palette = computed(() => MAP_STYLES[sheet.style].palette)
+watch(
+  () => sheet.style,
+  () => {
+    if (map.value && mapLoaded) applyPalette(map.value, palette.value)
+  },
 )
 
 const pickedRef = computed(() => (picked.value ? mgrsAt(picked.value, digits.value) : null))
@@ -177,7 +186,7 @@ const sheetSummary = computed(() => `${sheet.paper.toUpperCase()} ${sheet.orient
 const exampleSummary = computed(() => EXAMPLE_MODES.find((o) => o.mode === sheet.example.mode)?.label ?? null)
 const layersSummary = computed(() => {
   const on = (Object.keys(layers) as LayerGroup[]).filter((g) => layers[g]).length
-  return `${on} of ${Object.keys(layers).length} on`
+  return `${MAP_STYLES[sheet.style].label} · ${on} of ${Object.keys(layers).length} on`
 })
 
 const pickedOnSheet = computed(() => !!picked.value && isOnSheet(sheet, picked.value))
@@ -210,7 +219,7 @@ onMounted(() => {
   const hadMapInHash = new URLSearchParams(location.hash.slice(1)).has('map')
   const m = new Map({
     container: mapEl.value!,
-    style: buildStyle(militaryPalette),
+    style: buildStyle(palette.value),
     center: sheet.center,
     zoom: 12,
     hash: 'map',
@@ -222,7 +231,7 @@ onMounted(() => {
   m.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left')
 
   m.setMissingStyleImageResolver((id) => {
-    if (id === 'marsh') m.addImage('marsh', marshPattern(militaryPalette.waterway))
+    if (id === 'marsh') m.addImage('marsh', marshPattern(palette.value.waterway))
   })
   m.on('load', () => {
     mapLoaded = true
@@ -333,6 +342,19 @@ onBeforeUnmount(() => map.value?.remove())
       </PanelSection>
 
       <PanelSection id="layers" title="Layers" :summary="layersSummary">
+        <div class="field">
+          <span class="label">Map style</span>
+          <div class="segmented">
+            <button
+              v-for="(def, id) in MAP_STYLES"
+              :key="id"
+              :class="{ active: sheet.style === id }"
+              @click="sheet.style = id as MapStyleId"
+            >
+              {{ def.label }}
+            </button>
+          </div>
+        </div>
         <label v-for="(on, group) in layers" :key="group" class="toggle">
           <input type="checkbox" :checked="on" @change="setLayerGroup(group, ($event.target as HTMLInputElement).checked)" />
           {{ layerLabel(group) }}
@@ -367,6 +389,6 @@ onBeforeUnmount(() => map.value?.remove())
       <footer>WGS 84 · UTM/MGRS</footer>
     </aside>
     <div ref="mapEl" class="map"></div>
-    <SheetPreview v-if="previewOpen" :sheet="sheet" :palette="militaryPalette" @close="previewOpen = false" />
+    <SheetPreview v-if="previewOpen" :sheet="sheet" :palette="palette" @close="previewOpen = false" />
   </div>
 </template>

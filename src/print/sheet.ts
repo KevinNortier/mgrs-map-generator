@@ -1,6 +1,7 @@
 import type { FeatureCollection, Position } from 'geojson'
 import { utm, zoneFor } from '../mgrs/grid'
 import { decodeExample, encodeExample, type ExampleSetting } from './example'
+import type { MapStyleId } from '../map/style'
 
 export type Paper = 'a4' | 'a3'
 export type Orientation = 'portrait' | 'landscape'
@@ -15,6 +16,8 @@ export interface Sheet {
   center: [number, number]
   /** Worked example in the grid reference box. */
   example: ExampleSetting
+  /** Map style, on screen and in print. */
+  style: MapStyleId
 }
 
 export const PAPERS: Record<Paper, { width: number; height: number }> = {
@@ -154,7 +157,7 @@ export function sheetGeoJSON(sheet: Sheet): FeatureCollection {
   }
 }
 
-// URL hash state: `#map=…&sheet=a4-landscape-25000&at=59.33,18.07&title=…&ex=…` (the map position is managed by MapLibre).
+// URL hash state: `#map=…&sheet=a4-landscape-25000&at=59.33,18.07&title=…&ex=…&style=…` (the map position is managed by MapLibre).
 // Free text is base64url-encoded because MapLibre rewrites the hash with decodeURIComponent,
 // which would break text containing & or =.
 
@@ -184,6 +187,7 @@ export function readSheetFromHash(fallback: Sheet): Sheet {
     scale: SCALES.includes(Number(scale) as Scale) ? (Number(scale) as Scale) : fallback.scale,
     center: Number.isFinite(lat) && Number.isFinite(lon) && params.has('at') ? [lon, lat] : fallback.center,
     example: params.has('ex') ? decodeExample(params.get('ex'), decodeText) : fallback.example,
+    style: params.get('style') === 'orienteering' ? 'orienteering' : fallback.style,
   }
 }
 
@@ -196,6 +200,8 @@ export function writeSheetToHash(sheet: Sheet) {
   const ex = encodeExample(sheet.example, encodeText)
   if (ex) params.set('ex', ex)
   else params.delete('ex')
+  if (sheet.style !== 'military') params.set('style', sheet.style)
+  else params.delete('style')
   // Keep the hash readable: MapLibre's own entry uses literal slashes.
   history.replaceState(history.state, '', `#${decodeURIComponent(params.toString())}`)
 }

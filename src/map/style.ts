@@ -1,4 +1,4 @@
-import type { StyleSpecification, ExpressionSpecification } from 'maplibre-gl'
+import type { Map, StyleSpecification, ExpressionSpecification } from 'maplibre-gl'
 import { demSource, contourTilesUrl } from '../terrain/dem'
 
 export interface Palette {
@@ -40,6 +40,34 @@ export const militaryPalette: Palette = {
   building: '#3a3a3a',
   text: '#111111',
   grid: '#000000',
+}
+
+// Orienteering palette, loosely following ISOM: white is runnable forest, yellow is open land.
+export const orienteeringPalette: Palette = {
+  paper: '#ffffff',
+  forest: '#ffffff',
+  open: '#ffcc55',
+  farmland: '#ffe4a3',
+  wetland: '#ffffff',
+  builtUp: '#e6d2b5',
+  water: '#5cc3f0',
+  waterway: '#1e90d6',
+  contour: '#c8641e',
+  roadMajor: '#d9a066',
+  roadMajorCasing: '#000000',
+  roadMinor: '#ffffff',
+  roadMinorCasing: '#000000',
+  track: '#000000',
+  building: '#5a5a5a',
+  text: '#000000',
+  grid: '#000000',
+}
+
+export type MapStyleId = 'military' | 'orienteering'
+
+export const MAP_STYLES: Record<MapStyleId, { label: string; palette: Palette }> = {
+  military: { label: 'Military topo', palette: militaryPalette },
+  orienteering: { label: 'Orienteering', palette: orienteeringPalette },
 }
 
 const FONT_REGULAR = ['Noto Sans Regular']
@@ -390,6 +418,22 @@ export const LAYER_GROUPS = {
 } as const
 
 export type LayerGroup = keyof typeof LAYER_GROUPS
+
+/**
+ * Recolours a live map to another palette. Only paint properties change, so runtime state
+ * (grid and sheet data, layer visibility) is kept, which a full setStyle would reset.
+ */
+type PaintName = Parameters<Map['setPaintProperty']>[1]
+
+export function applyPalette(map: Map, p: Palette) {
+  for (const layer of buildStyle(p).layers) {
+    if (!map.getLayer(layer.id) || !('paint' in layer) || !layer.paint) continue
+    for (const [prop, value] of Object.entries(layer.paint)) {
+      map.setPaintProperty(layer.id, prop as PaintName, value as Parameters<Map['setPaintProperty']>[2])
+    }
+  }
+  if (map.hasImage('marsh')) map.updateImage('marsh', marshPattern(p.waterway))
+}
 
 /** Marsh symbol: short horizontal blue dashes, tiled as a fill pattern. */
 export function marshPattern(color: string) {
