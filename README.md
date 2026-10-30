@@ -24,8 +24,10 @@ orienteering and land navigation training. It is a static site: no backend, data
 - PNG of the whole sheet at 300 DPI, tagged with its resolution
 - Large sheets are rendered in parts when they exceed the graphics card's canvas limit
 
-**Sharing**
-- All sheet settings live in the URL, e.g. `#map=12/59.33/18.07&sheet=a4-landscape-25000&at=59.33,18.07`, so a link reproduces the sheet
+**Save and share**
+- All sheet settings live in the URL, e.g. `#map=12/59.33/18.07&sheet=a4-landscape-25000&at=59.33,18.07`, so a link reproduces the sheet; **Copy link** copies it
+- **My maps**: named sheets saved in this browser (open, update, save as new, delete)
+- Download a sheet as a `.json` file and open it again, e.g. on another computer; files are validated on load
 
 ## Run
 
@@ -63,6 +65,7 @@ Titles in other scripts would need an embedded font.
 | `src/print/render-map.ts` | Off-screen map render of the frame at a given DPI, tiled when needed |
 | `src/print/export.ts` | PDF export (jsPDF + svg2pdf.js) and PNG export |
 | `src/print/example.ts` | Grid reference example setting |
+| `src/print/saved.ts` | My maps (browser storage), .json sheet files, sheet validation |
 | `src/print/north.ts` | Grid convergence, magnetic declination and mils |
 | `src/ui/` | Sheet preview dialog, collapsible panel sections |
 | `src/App.vue` | Map, side panel, print-area handle, coordinate readout |

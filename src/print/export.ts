@@ -14,7 +14,7 @@ function mapProgress(onProgress?: ExportProgress) {
 }
 
 /** "sodertalje-exercise-north_33V-XF-513-653_25k" */
-export function exportFileName(sheet: Sheet, ext: 'pdf' | 'png') {
+export function exportFileName(sheet: Sheet, ext: 'pdf' | 'png' | 'json') {
   const slug =
     sheet.title
       .normalize('NFKD')

@@ -6,6 +6,17 @@ import { buildGrid, mgrsAt, spacingForZoom } from './mgrs/grid'
 import SheetPreview from './ui/SheetPreview.vue'
 import PanelSection from './ui/PanelSection.vue'
 import { DEFAULT_EXAMPLE, isOnSheet, type ExampleSetting } from './print/example'
+import { download, exportFileName } from './print/export'
+import {
+  cloneSheet,
+  loadSavedMaps,
+  newMapId,
+  sheetFromFile,
+  sheetToFile,
+  storageAvailable,
+  storeSavedMaps,
+  type SavedMap,
+} from './print/saved'
 import {
   CONTOUR_INTERVAL,
   GRID_SPACING,
@@ -199,6 +210,96 @@ function usePickedAsExample() {
   pickingExample.value = false
 }
 
+// Save & share: link, My maps (this browser) and .json files
+const canStore = storageAvailable()
+const savedMaps = ref<SavedMap[]>(loadSavedMaps())
+/** The saved map the current sheet came from, if any; Save then updates it. */
+const activeMapId = ref<string | null>(null)
+const activeMap = computed(() => savedMaps.value.find((m) => m.id === activeMapId.value) ?? null)
+const isDirty = computed(() => !!activeMap.value && JSON.stringify(activeMap.value.sheet) !== JSON.stringify(sheet))
+const saveMessage = ref('')
+const fileInput = ref<HTMLInputElement>()
+const saveSummary = computed(() => (canStore ? `${savedMaps.value.length} saved` : null))
+
+function flash(message: string) {
+  saveMessage.value = message
+  setTimeout(() => {
+    if (saveMessage.value === message) saveMessage.value = ''
+  }, 3000)
+}
+
+function mapName(s: Sheet) {
+  return s.title.trim() || `Untitled · ${mgrsAt(s.center, 4) ?? ''}`
+}
+
+function mapMeta(m: SavedMap) {
+  const date = m.savedAt ? new Date(m.savedAt).toLocaleDateString() : ''
+  return `${m.sheet.paper.toUpperCase()} ${m.sheet.orientation} · 1:${m.sheet.scale / 1000}k${date ? ` · ${date}` : ''}`
+}
+
+function persist(maps: SavedMap[]) {
+  if (!storeSavedMaps(maps)) {
+    flash('Could not save: browser storage is unavailable or full.')
+    return false
+  }
+  savedMaps.value = maps
+  return true
+}
+
+function saveMap(asNew = false) {
+  const updating = !asNew && !!activeMap.value
+  const entry: SavedMap = { id: updating ? activeMapId.value! : newMapId(), savedAt: new Date().toISOString(), sheet: cloneSheet(sheet) }
+  if (persist([entry, ...savedMaps.value.filter((m) => m.id !== entry.id)])) {
+    activeMapId.value = entry.id
+    flash(updating ? 'Saved map updated.' : 'Saved to My maps.')
+  }
+}
+
+/** Replaces the current sheet (from My maps or a file) and shows it. */
+function applySheet(next: Sheet) {
+  Object.assign(sheet, cloneSheet(next))
+  pickingExample.value = false
+  zoomToSheet()
+}
+
+function openMap(m: SavedMap) {
+  applySheet(m.sheet)
+  activeMapId.value = m.id
+}
+
+function deleteMap(m: SavedMap) {
+  if (!confirm(`Delete "${mapName(m.sheet)}" from My maps?`)) return
+  if (persist(savedMaps.value.filter((x) => x.id !== m.id)) && activeMapId.value === m.id) activeMapId.value = null
+}
+
+async function copyLink() {
+  writeSheetToHash(sheet)
+  try {
+    await navigator.clipboard.writeText(location.href)
+    flash('Link copied. It opens this exact sheet.')
+  } catch {
+    flash('Could not copy; copy the address bar instead.')
+  }
+}
+
+function downloadJson() {
+  download(sheetToFile(sheet), exportFileName(sheet, 'json'))
+}
+
+async function openJson(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    applySheet(await sheetFromFile(file))
+    activeMapId.value = null
+    flash(`Opened ${file.name}.`)
+  } catch (err) {
+    flash(err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function copyPicked() {
   if (!pickedRef.value) return
   await navigator.clipboard.writeText(pickedRef.value)
@@ -339,6 +440,38 @@ onBeforeUnmount(() => map.value?.remove())
           </template>
           <p class="hint">{{ exampleHint }}</p>
         </div>
+      </PanelSection>
+
+      <PanelSection id="save" title="Save &amp; share" :summary="saveSummary">
+        <div class="actions">
+          <button @click="copyLink">Copy link</button>
+          <button @click="downloadJson">Download .json</button>
+          <button @click="fileInput?.click()">Open .json…</button>
+          <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="openJson" />
+        </div>
+        <p v-if="saveMessage" class="hint" role="status">{{ saveMessage }}</p>
+
+        <h3 class="subheading">My maps</h3>
+        <template v-if="canStore">
+          <div class="actions">
+            <button @click="saveMap()">{{ activeMap ? 'Update saved map' : 'Save to My maps' }}</button>
+            <button v-if="activeMap" @click="saveMap(true)">Save as new</button>
+          </div>
+          <p v-if="activeMap" class="hint">
+            Editing “{{ mapName(activeMap.sheet) }}”<template v-if="isDirty"> · unsaved changes</template>
+          </p>
+          <ul v-if="savedMaps.length" class="saved-list">
+            <li v-for="m in savedMaps" :key="m.id" :class="{ active: m.id === activeMapId }">
+              <button class="saved-open" :title="`Open ${mapName(m.sheet)}`" @click="openMap(m)">
+                <span class="saved-name">{{ mapName(m.sheet) }}</span>
+                <span class="saved-meta">{{ mapMeta(m) }}</span>
+              </button>
+              <button class="saved-delete" :aria-label="`Delete ${mapName(m.sheet)}`" title="Delete" @click="deleteMap(m)">×</button>
+            </li>
+          </ul>
+          <p v-else class="hint">No saved maps yet.</p>
+        </template>
+        <p v-else class="hint">This browser blocks storage (e.g. private mode), so My maps is unavailable. Use links or .json files instead.</p>
       </PanelSection>
 
       <PanelSection id="layers" title="Layers" :summary="layersSummary">
