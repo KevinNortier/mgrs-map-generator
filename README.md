@@ -48,6 +48,9 @@ On Windows PowerShell, if `npm` is blocked by the execution policy, use `npm.cmd
 
 `dist/` can be uploaded as-is to any static host (GitHub Pages, Cloudflare Pages, Netlify).
 
+Pushing to `master` deploys to GitHub Pages via `.github/workflows/deploy.yml` (repo Settings → Pages →
+Source: **GitHub Actions**).
+
 ## Printing
 
 Exports open from **Preview sheet**. Print the PDF at **100% / "Actual size"** (not "Fit to page");
