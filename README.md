@@ -10,6 +10,7 @@ orienteering and land navigation training. It is a static site: no backend, data
 - Contours (index contour every 5th line, labelled) and subtle hillshade
 - Two map styles, on screen and in print: **Military topo** (green forest) and **Orienteering** (ISOM-like: white runnable forest, yellow open land)
 - MGRS grid that adapts to zoom (100 km / 10 km / 1 km / 100 m), with zone boundaries and 100 km square IDs; correct across UTM zones, including the Norway (32V) and Svalbard exceptions
+- Search for places (Photon geocoder, biased to the current view) or type a coordinate: MGRS (`33V XF 513 653`, or `XF 513 653` in the zone at the map centre) or decimal `lat, lon`
 - Live cursor coordinate, and click to read a coordinate at 4, 6, 8 or 10 figures with copy
 
 **Sheet**
@@ -68,12 +69,14 @@ Titles in other scripts would need an embedded font.
 | `src/print/export.ts` | PDF export (jsPDF + svg2pdf.js) and PNG export |
 | `src/print/example.ts` | Grid reference example setting |
 | `src/print/saved.ts` | My maps (browser storage), .json sheet files, sheet validation |
+| `src/search/places.ts` | Place search (Photon) and typed MGRS / lat-lon coordinates |
 | `src/print/north.ts` | Grid convergence, magnetic declination and mils |
-| `src/ui/` | Sheet preview dialog, collapsible panel sections |
+| `src/ui/` | Sheet preview dialog, collapsible panel sections, search box |
 | `src/App.vue` | Map, side panel, print-area handle, coordinate readout |
 
 ## Data and attribution
 
 - Map data © OpenStreetMap contributors (ODbL), vector tiles from OpenFreeMap / OpenMapTiles
 - Elevation: AWS Terrain Tiles (Mapzen and its sources)
+- Place search: Photon by Komoot (OpenStreetMap data)
 - Magnetic model: NOAA World Magnetic Model 2025

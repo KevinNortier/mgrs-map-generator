@@ -5,6 +5,8 @@ import { ALL_LAYERS, applyPalette, buildStyle, marshPattern, LAYER_GROUPS, MAP_S
 import { buildGrid, mgrsAt, spacingForZoom } from './mgrs/grid'
 import SheetPreview from './ui/SheetPreview.vue'
 import PanelSection from './ui/PanelSection.vue'
+import PlaceSearch from './ui/PlaceSearch.vue'
+import type { SearchResult } from './search/places'
 import { DEFAULT_EXAMPLE, isOnSheet, type ExampleSetting } from './print/example'
 import { download, exportFileName } from './print/export'
 import {
@@ -194,6 +196,21 @@ function layerLabel(group: LayerGroup) {
   }
 }
 
+function mapCenter(): [number, number] {
+  const c = map.value?.getCenter()
+  return c ? [c.lng, c.lat] : sheet.center
+}
+
+/** Shows a search result and drops the read-coordinate pin on it. */
+function goToResult(r: SearchResult) {
+  const m = map.value
+  if (!m) return
+  if (r.bounds) m.fitBounds(r.bounds, { padding: 40, maxZoom: 15 })
+  else m.flyTo({ center: r.lngLat, zoom: Math.max(m.getZoom(), r.kind === 'coordinate' ? 14 : 13) })
+  picked.value = r.lngLat
+  marker.setLngLat(r.lngLat).addTo(m)
+}
+
 function centerSheetOnView() {
   const c = map.value?.getCenter()
   if (c) sheet.center = [c.lng, c.lat]
@@ -378,6 +395,7 @@ onBeforeUnmount(() => map.value?.remove())
   <div class="layout">
     <aside class="panel">
       <h1>MGRS Map Generator</h1>
+      <PlaceSearch :near="mapCenter" @select="goToResult" />
 
       <PanelSection id="print" title="Print area" :summary="sheetSummary">
         <div class="field">

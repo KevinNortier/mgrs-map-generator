@@ -321,3 +321,63 @@ button.active {
     border-top: 1px solid var(--border);
   }
 }
+
+.place-search {
+  position: relative;
+}
+
+.place-search input {
+  font: inherit;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.place-search-results {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.place-search-results li {
+  display: flex;
+  flex-direction: column;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.place-search-results li.active {
+  background: var(--bg);
+}
+
+.place-search-results .name {
+  font-size: 14px;
+}
+
+.place-search-results .coordinate .name {
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.place-search-results .detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.place-search-results li.empty {
+  cursor: default;
+  font-size: 13px;
+  color: var(--muted);
+}
