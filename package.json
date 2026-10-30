@@ -1,0 +1,27 @@
+{
+  "name": "mgrs-map-static",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "geomagnetism": "^0.2.0",
+    "jspdf": "^4.2.1",
+    "maplibre-contour": "^0.1.1",
+    "maplibre-gl": "^6.16.0",
+    "mgrs": "^2.2.0",
+    "proj4": "^2.22.0",
+    "svg2pdf.js": "^2.9.0",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5",
+    "vue-tsc": "^3.3.14"
+  }
+}
