@@ -178,6 +178,8 @@ function renderGrid(layout: SheetLayout, zones: SheetZones) {
   }
 
   const capBig = 0.72 * LABEL_BIG
+  // On a 100 m grid, vertical full northings are centred on their line (see below)
+  const centred = zones.zones.some((z) => z.lines.some((l) => !isKm(l.value)))
   // Horizontal full value: where the large digits start, and its extent along the edge
   const fullE = (pos: number, value: number) => {
     const probe = fullValue(0, 0, value, 'E')
@@ -220,6 +222,30 @@ function renderGrid(layout: SheetLayout, zones: SheetZones) {
           }
         }
       }
+      // A stretch without a km line, e.g. a narrow strip of another zone on a 100 m grid, still needs a
+      // full value, or its 100 m figures can't be read: put it on the first line with room.
+      if (!full.size) {
+        for (const l of onEdge) {
+          const { start, a, b } = fullE(l.pos, l.value)
+          if (tryPlace(edge, a, b)) {
+            out.push(fullValue(start, y, l.value, 'E').svg)
+            full.add(l)
+            break
+          }
+        }
+      }
+      // 100 m figures west of a 100 km line belong to the previous 100 km square (…99 km), which no line on
+      // the edge shows: give the nearest of them a full value too.
+      if (km[0] && Math.round(km[0].value) % 100_000 === 0) {
+        for (const l of onEdge.filter((l) => l.pos < km[0].pos).reverse()) {
+          const { start, a, b } = fullE(l.pos, l.value)
+          if (tryPlace(edge, a, b)) {
+            out.push(fullValue(start, y, l.value, 'E').svg)
+            full.add(l)
+            break
+          }
+        }
+      }
       for (const l of onEdge) {
         if (full.has(l)) continue
         const d = splitDigits(l.value)
@@ -246,13 +272,28 @@ function renderGrid(layout: SheetLayout, zones: SheetZones) {
       }
     }
 
-    // Full northings written vertically in the side margin, reading upwards, clear of the small 100 m
-    // digits next to the frame: above the line near the bottom corner, below it near the top. On the
-    // left side when the zone reaches it, otherwise on the right.
-    const side: Edge = labels.some((l) => l.edge === 'left' && isKm(l.value)) ? 'left' : 'right'
+    // Full northings written vertically in the side margin, reading upwards. On a 100 m grid they are
+    // centred on their line, in a column clear of the figures beside the frame, so the large figures are
+    // level with the line they belong to. On a 1 km grid the large figures beside the frame fill that
+    // column, so they go beside the line instead: above it near the bottom corner, below it near the top.
+    // On the left side when the zone reaches it, otherwise on the right. As for eastings, a stretch
+    // without a km line gets its full value on a 100 m line, and so do the figures below a 100 km line.
+    const side: Edge = labels.some((l) => l.edge === 'left') ? 'left' : 'right'
     const kmN = labels.filter((l) => l.edge === side && isKm(l.value)).sort((a, b) => b.pos - a.pos) // south first
     // In rotated coordinates +x runs up the page; glyphs sit left of the baseline.
-    const verticalX = side === 'left' ? frame.x - 3.4 : right + 3.4 + capBig
+    const offset = centred ? 5 : 3.4
+    const verticalX = side === 'left' ? frame.x - offset : right + offset + capBig
+    const placeN = (l: EdgeLabel, above: boolean) => {
+      const probe = fullValue(0, 0, l.value, 'N')
+      const half = probe.principalWidth / 2
+      const { a, b } = centred
+        ? { a: l.pos - half - (probe.width - probe.leadingWidth - probe.principalWidth), b: l.pos + half + probe.leadingWidth }
+        : fullN(l.pos, l.value, above)
+      if (!tryPlace(`${side}-vertical`, a, b)) return false
+      const label = fullValue(-b + probe.leadingWidth, 0, l.value, 'N')
+      out.push(`<g transform="translate(${f(verticalX)} 0) rotate(-90)">${label.svg}</g>`)
+      return true
+    }
     const done = new Set<EdgeLabel>()
     for (const [candidates, above] of [
       [kmN, true],
@@ -260,12 +301,17 @@ function renderGrid(layout: SheetLayout, zones: SheetZones) {
     ] as const) {
       for (const l of candidates) {
         if (done.has(l)) break
-        const { a, b, probe } = fullN(l.pos, l.value, above)
-        if (!tryPlace(`${side}-vertical`, a, b)) continue
-        const label = fullValue(-b + probe.leadingWidth, 0, l.value, 'N')
-        out.push(`<g transform="translate(${f(verticalX)} 0) rotate(-90)">${label.svg}</g>`)
-        done.add(l)
-        break
+        if (placeN(l, above)) {
+          done.add(l)
+          break
+        }
+      }
+    }
+    const below = kmN[0] && Math.round(kmN[0].value) % 100_000 === 0 ? labels.filter((l) => l.edge === side && l.pos > kmN[0].pos).sort((a, b) => a.pos - b.pos) : []
+    const fallback = done.size ? below : labels.filter((l) => l.edge === side).sort((a, b) => b.pos - a.pos)
+    place: for (const l of fallback) {
+      for (const above of done.size ? [false, true] : [true, false]) {
+        if (placeN(l, above)) break place
       }
     }
   }
