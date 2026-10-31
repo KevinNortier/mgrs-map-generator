@@ -499,8 +499,8 @@ function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours:
 function renderNorth(box: Box, info: NorthInfo) {
   const out = [blockTitle(box, 'NORTH POINTS')]
   const cx = box.x + box.width / 2
-  const baseY = box.y + 22
-  const len = 15
+  const baseY = box.y + 20
+  const len = 13
   // Small angles are drawn exaggerated so the three norths can be told apart.
   const MIN = 12
   const show = (a: number) => (Math.abs(a) < 0.05 ? 0 : Math.sign(a) * Math.max(Math.abs(a), MIN))
@@ -542,7 +542,9 @@ function renderNorth(box: Box, info: NorthInfo) {
     `G–M angle: ${formatAngle(info.gridMagnetic)}`,
     `Annual change ${Math.abs(info.annualChange).toFixed(2)}° ${info.annualChange >= 0 ? 'E' : 'W'} · ${info.year}`,
   ]
-  lines.forEach((l, i) => out.push(text(box.x, baseY + 3 + i * 2.3, l, 1.6)))
+  // Key to the abbreviations, then the values
+  out.push(text(box.x, baseY + 2.8, 'GN grid · TN true · MN magnetic north', 1.5, 'font-style="italic"'))
+  lines.forEach((l, i) => out.push(text(box.x, baseY + 5.2 + i * 2.2, l, 1.6)))
   if (exaggerated) out.push(text(box.x, box.y + 5, 'Angles not to scale', 1.4, 'font-style="italic"'))
   return out.join('')
 }
