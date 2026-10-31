@@ -569,8 +569,17 @@ function renderNorth(box: Box, info: NorthInfo, gridMagnetic: ZoneAngle[]) {
     if (Math.abs(mnTrue) >= Math.abs(tnTrue)) mnAngle = tnAngle + (Math.sign(mnTrue - tnTrue) || 1) * MIN
     else tnAngle = mnAngle + (Math.sign(tnTrue - mnTrue) || 1) * MIN
   }
-  const exaggerated = Math.abs(tnAngle - tnTrue) > 0.05 || Math.abs(mnAngle - mnTrue) > 0.05
   const tip = (deg: number, l = len): [number, number] => [cx + Math.sin((deg * Math.PI) / 180) * l, baseY - Math.cos((deg * Math.PI) / 180) * l]
+
+  // Dashed arcs between the prongs: grid–magnetic angle (GN–MN) outside, convergence (TN–GN) inside
+  const arc = (from: number, to: number, r: number) => {
+    if (Math.abs(to - from) < 0.05) return ''
+    const [x0, y0] = tip(from, r)
+    const [x1, y1] = tip(to, r)
+    // Angles run clockwise from grid north, which is the positive sweep direction with y down
+    return `<path d="M${f(x0)} ${f(y0)} A${r} ${r} 0 0 ${to > from ? 1 : 0} ${f(x1)} ${f(y1)}" fill="none" stroke="${INK}" stroke-width="0.15" stroke-dasharray="0.8 0.5"/>`
+  }
+  out.push(arc(0, mnAngle, 11), arc(tnAngle, 0, 8))
 
   // Grid north: vertical line labelled GN
   out.push(line(cx, baseY, cx, baseY - len, 0.25))
@@ -595,7 +604,9 @@ function renderNorth(box: Box, info: NorthInfo, gridMagnetic: ZoneAngle[]) {
   // Key under the diagram
   const key = ['GN grid north', 'TN true north', 'MN magnetic north']
   key.forEach((k, i) => out.push(text(box.x, baseY + 2.8 + i * 2, k, 1.4, 'font-style="italic"')))
-  if (exaggerated) out.push(text(box.x, baseY + 2.8 + key.length * 2 + 0.4, 'Angles not to scale', 1.4, 'font-style="italic"'))
+  // The prongs are not to scale (small angles are exaggerated): the values beside the diagram count
+  const caution = ['Use diagram only to obtain', 'numerical values']
+  caution.forEach((c, i) => out.push(text(box.x, baseY + 3.2 + (key.length + i) * 2, c, 1.4, 'font-weight="bold" font-style="italic"')))
 
   // Values, then how to convert azimuths with the grid–magnetic angle: with magnetic north east of grid
   // north, a magnetic azimuth is smaller than the grid azimuth, so grid to magnetic subtracts.
