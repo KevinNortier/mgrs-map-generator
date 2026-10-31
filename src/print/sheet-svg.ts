@@ -64,7 +64,7 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
     parts.push(text(frame.x + frame.width / 2, frame.y + frame.height / 2, 'Rendering map…', 4, `text-anchor="middle" fill="#888"`))
   }
 
-  if (layers.grid) parts.push(renderGrid(layout, zones), renderSquareLabels(zones))
+  if (layers.grid) parts.push(renderGrid(layout, zones), renderFaceDigits(sheet, layout, zones), renderSquareLabels(zones))
   // The junction is shown even without the grid: it tells which zone's references apply where.
   parts.push(renderJunctions(zones))
   if (example) parts.push(renderExampleMarker(example, sheet, layout, grid))
@@ -387,6 +387,64 @@ function renderSquareLabels(zones: SheetZones) {
       } else {
         out.push(boxedText(p[0], p[1] - 1.5, label(first), SIZE, 'middle', 'font-weight="bold"'))
         out.push(boxedText(p[0], p[1] + 1.5 + SIZE * 0.72, label(second), SIZE, 'middle', 'font-weight="bold"'))
+      }
+    }
+  }
+  return out.join('')
+}
+
+/**
+ * Principal digits repeated along the km lines on the map face, so the grid can be read away from the
+ * margin (e.g. on a folded sheet): eastings in a few rows across the sheet, northings in a few columns.
+ * Each sits midway between two lines of the other direction, never on a crossing, on a white patch
+ * that breaks its line. Lines of each zone are labelled in that zone's grid and kept clear of junctions.
+ * 100 km lines are left out: the square letters on both sides already mark them.
+ */
+function renderFaceDigits(sheet: Sheet, layout: SheetLayout, zones: SheetZones) {
+  const { frame } = layout
+  const spacing = GRID_SPACING[sheet.scale]
+  const SIZE = 2.2
+  const EVERY = 90 // mm between rows (and columns) of digits
+  const EDGE = 6 // keep clear of the edge labels
+  const spread = (start: number, length: number) => {
+    const count = Math.max(1, Math.round(length / EVERY))
+    return Array.from({ length: count }, (_, i) => start + (length * (i + 0.5)) / count)
+  }
+  const rows = spread(frame.y, frame.height)
+  const cols = spread(frame.x, frame.width)
+  const midway = (v: number) => (Math.floor(v / spacing) + 0.5) * spacing
+  const out: string[] = []
+
+  for (const z of zones.zones) {
+    // Grid coordinates of the paper point nearest to `target` on a line
+    const nearest = (run: Pt[], target: number, axis: 0 | 1) => run.reduce((best, p) => (Math.abs(p[axis] - target) < Math.abs(best[axis] - target) ? p : best))
+    const own = (p: Pt) => z.conv.forward(zones.toLonLat(p)) as Pt
+    const place = (e: number, n: number, value: number) => {
+      const [x, y] = zones.toPaper(z.conv.inverse([e, n]) as Pt)
+      const digits = splitDigits(value).principal
+      const w = textWidth(digits, SIZE) + 0.8
+      const h = SIZE * 0.95
+      // Corners with room around them, so digits stay a few mm clear of a zone junction
+      const PAD = 3
+      const corners: Pt[] = [
+        [x - w / 2 - PAD, y - h / 2 - PAD],
+        [x + w / 2 + PAD, y - h / 2 - PAD],
+        [x - w / 2 - PAD, y + h / 2 + PAD],
+        [x + w / 2 + PAD, y + h / 2 + PAD],
+      ]
+      const clear = corners.every(
+        ([cx, cy]) =>
+          cx > frame.x + EDGE && cx < frame.x + frame.width - EDGE && cy > frame.y + EDGE && cy < frame.y + frame.height - EDGE && zones.zoneAt([cx, cy]) === z.zone,
+      )
+      if (!clear) return
+      out.push(`<rect x="${f(x - w / 2)}" y="${f(y - h / 2)}" width="${f(w)}" height="${f(h)}" fill="#ffffff"/>`)
+      out.push(text(x, y + SIZE * 0.36, digits, SIZE, 'text-anchor="middle" font-weight="bold"'))
+    }
+    for (const l of z.lines) {
+      if (Math.round(l.value) % 1000 !== 0 || Math.round(l.value) % 100_000 === 0) continue
+      for (const run of l.runs) {
+        if (l.axis === 'e') for (const y of rows) place(l.value, midway(own(nearest(run, y, 1))[1]), l.value)
+        else for (const x of cols) place(midway(own(nearest(run, x, 0))[0]), l.value, l.value)
       }
     }
   }
