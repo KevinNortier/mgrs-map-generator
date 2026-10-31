@@ -568,31 +568,51 @@ function renderLegend(box: Box, p: Palette, layers: SheetLayers, dataDate?: stri
   return out.join('')
 }
 
+/** Metres per yard and per statute mile. */
+const YARD = 0.9144
+const MILE = 1609.344
+
+/**
+ * Scale bars as chosen for the sheet: metric, imperial, or both with the imperial bar below and the zero
+ * points aligned. Imperial is in yards where the metric bar is in metres, in statute miles where it is in
+ * kilometres. Each has one subdivided unit left of zero and whole units to the right, and stays within
+ * the metric bar's 60 mm. A single bar gets the roomier spacing.
+ */
 function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours: boolean) {
   const out = [text(box.x + box.width / 2, box.y + 3.2, `SCALE ${formatScale(sheet.scale)}`, 3.4, 'text-anchor="middle" font-weight="bold"')]
+  const mmPerMetre = 1000 / sheet.scale
+  const both = sheet.scaleBars === 'both'
+  const barH = both ? 1.2 : 1.4
+  const zeroX = box.x + box.width / 2 - 10 // metric bar: 20 mm left of zero, 40 mm right
+  const cx = box.x + box.width / 2
 
-  // Scale bar: one subdivided unit to the left of zero, two whole units to the right. 1 unit = 20 mm.
+  /** One bar: `unit` in metres, labelled with `fmt`; the left unit is split in five. */
+  const bar = (y: number, unit: number, right: number, fmt: (units: number) => string, name: string) => {
+    const unitMm = unit * mmPerMetre
+    const left = zeroX - unitMm
+    for (let i = 0; i < 5; i++) {
+      out.push(`<rect x="${f(left + (i * unitMm) / 5)}" y="${f(y)}" width="${f(unitMm / 5)}" height="${barH}" fill="${i % 2 ? '#fff' : INK}" stroke="${INK}" stroke-width="0.1"/>`)
+    }
+    for (let i = 0; i < right; i++) {
+      out.push(`<rect x="${f(zeroX + unitMm * i)}" y="${f(y)}" width="${f(unitMm)}" height="${barH}" fill="${i % 2 ? INK : '#fff'}" stroke="${INK}" stroke-width="0.1"/>`)
+    }
+    const labelY = y + barH + (both ? 2.2 : 2.4)
+    const size = both ? 1.8 : 2
+    out.push(text(left, labelY, fmt(1), size, 'text-anchor="middle"'))
+    for (let i = 0; i <= right; i++) out.push(text(zeroX + unitMm * i, labelY, fmt(i), size, 'text-anchor="middle"'))
+    out.push(text(cx, labelY + (both ? 2.3 : 2.8), name, both ? 1.6 : 1.9, 'text-anchor="middle" letter-spacing="0.2"'))
+  }
+
   const unit = sheet.scale / 50 // metres per 20 mm
-  const unitMm = 20
-  const barH = 1.4
-  const x0 = box.x + (box.width - 3 * unitMm) / 2
-  const y0 = box.y + 7.5
   const km = unit >= 1000
-  const fmt = (m: number) => (km ? String(m / 1000) : String(m))
-  for (let i = 0; i < 5; i++) {
-    out.push(`<rect x="${f(x0 + (i * unitMm) / 5)}" y="${f(y0)}" width="${unitMm / 5}" height="${barH}" fill="${i % 2 ? '#fff' : INK}" stroke="${INK}" stroke-width="0.1"/>`)
-  }
-  for (let i = 0; i < 2; i++) {
-    out.push(`<rect x="${f(x0 + unitMm * (i + 1))}" y="${f(y0)}" width="${unitMm}" height="${barH}" fill="${i % 2 ? INK : '#fff'}" stroke="${INK}" stroke-width="0.1"/>`)
-  }
-  const labels: [number, string][] = [
-    [x0, fmt(unit)],
-    [x0 + unitMm, '0'],
-    [x0 + 2 * unitMm, fmt(unit)],
-    [x0 + 3 * unitMm, fmt(2 * unit)],
-  ]
-  for (const [x, l] of labels) out.push(text(x, y0 + barH + 2.4, l, 2, 'text-anchor="middle"'))
-  out.push(text(box.x + box.width / 2, y0 + barH + 5.2, km ? 'KILOMETRES' : 'METRES', 1.9, 'text-anchor="middle" letter-spacing="0.2"'))
+  const imperial =
+    sheet.scale <= 10_000
+      ? { unit: 100 * YARD, right: 4, fmt: (i: number) => String(i * 100), name: 'YARDS' }
+      : km
+        ? { unit: 0.5 * MILE, right: 2, fmt: (i: number) => String(i * 0.5), name: 'STATUTE MILES' }
+        : { unit: 500 * YARD, right: 2, fmt: (i: number) => String(i * 500), name: 'YARDS' }
+  if (sheet.scaleBars !== 'imperial') bar(both ? box.y + 5.6 : box.y + 7.5, unit, 2, (i) => String((i * unit) / (km ? 1000 : 1)), km ? 'KILOMETRES' : 'METRES')
+  if (sheet.scaleBars !== 'metric') bar(both ? box.y + 12.6 : box.y + 7.5, imperial.unit, imperial.right, imperial.fmt, imperial.name)
 
   // The contour lines (first one bold) are left out when contours are switched off.
   const contourNotes = contours ? [`CONTOUR INTERVAL ${CONTOUR_INTERVAL[sheet.scale]} METRES`, 'Elevations in metres above mean sea level'] : []
@@ -604,7 +624,9 @@ function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours:
   ]
   notes.forEach((n, i) => {
     const bold = contours && i === 0
-    out.push(text(box.x + box.width / 2, y0 + barH + 10 + i * 2.9, n, bold ? 2.2 : 1.9, `text-anchor="middle"${bold ? ' font-weight="bold"' : ''}`))
+    const y = both ? box.y + 22.6 + i * 2.5 : box.y + 18.9 + i * 2.9
+    const size = both ? (bold ? 2.1 : 1.8) : bold ? 2.2 : 1.9
+    out.push(text(cx, y, n, size, `text-anchor="middle"${bold ? ' font-weight="bold"' : ''}`))
   })
   return out.join('')
 }

@@ -20,7 +20,13 @@ export interface Sheet {
   style: MapStyleId
   /** Hillshade, contours and grid on or off, on screen and in print. */
   layers: SheetLayers
+  /** Scale bars in the margin. */
+  scaleBars: ScaleBars
 }
+
+/** Metric bar (metres or kilometres), imperial bar (yards or statute miles), or both. */
+export type ScaleBars = 'metric' | 'imperial' | 'both'
+export const SCALE_BARS: ScaleBars[] = ['metric', 'imperial', 'both']
 
 export const PAPERS: Record<Paper, { width: number; height: number }> = {
   a4: { width: 210, height: 297 },
@@ -198,6 +204,7 @@ export function readSheetFromHash(fallback: Sheet): Sheet {
     example: params.has('ex') ? decodeExample(params.get('ex'), decodeText) : fallback.example,
     style: params.get('style') === 'orienteering' ? 'orienteering' : fallback.style,
     layers: params.has('hide') ? decodeHidden(params.get('hide')!) : fallback.layers,
+    scaleBars: SCALE_BARS.includes(params.get('bars') as ScaleBars) ? (params.get('bars') as ScaleBars) : fallback.scaleBars,
   }
 }
 
@@ -215,6 +222,8 @@ export function writeSheetToHash(sheet: Sheet) {
   const hidden = SHEET_LAYER_GROUPS.filter((g) => !sheet.layers[g])
   if (hidden.length) params.set('hide', hidden.join(','))
   else params.delete('hide')
+  if (sheet.scaleBars !== 'metric') params.set('bars', sheet.scaleBars)
+  else params.delete('bars')
   // Keep the hash readable: MapLibre's own entry uses literal slashes.
   history.replaceState(history.state, '', `#${decodeURIComponent(params.toString())}`)
 }
