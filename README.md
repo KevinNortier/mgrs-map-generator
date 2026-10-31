@@ -17,6 +17,7 @@ orienteering and land navigation training. It is a static site: no backend, data
 - Print area on the map: A4 or A3, portrait or landscape, 1:10 000 / 1:25 000 / 1:50 000, moved with a drag handle
 - The frame is a rectangle in the UTM grid of its zone, so the printed grid is square to the paper (grid north up)
 - Margin information: title, 100 km square(s), datum and zone; MGRS grid labels with full values near the corners; legend; scale bar; contour interval; north diagram with grid convergence, magnetic declination (WMM2025), grid–magnetic angle and annual change, in degrees and mils; "How to give a grid reference" box; attribution
+- Zone junctions and 100 km squares as on NATO sheets: where a grid zone junction crosses the sheet, each zone's grid is drawn only within its own zone (meeting at an angle at the labelled junction line, with its own edge figures), so every grid line gives a true MGRS reference; 100 km square letters on both sides of square boundaries; a "100 km squares" diagram with the grid zone designation and the grid–magnetic angle per zone
 - Optional worked grid reference example: off (default), the map centre, or a custom named point
 
 **Export**
@@ -67,6 +68,7 @@ Titles in other scripts would need an embedded font.
 | `src/terrain/dem.ts` | Elevation source; contours (maplibre-contour) and hillshade |
 | `src/mgrs/grid.ts` | MGRS grid generation per UTM zone, zone lookup, reference formatting |
 | `src/print/sheet.ts` | Sheet model: paper, scale, layout of frame and margin blocks, grid-aligned frame, URL-hash state |
+| `src/print/sheet-zones.ts` | Grid zones and 100 km squares on a sheet: per-zone grid lines clipped at zone junctions, junction lines, square regions |
 | `src/print/sheet-svg.ts` | The printed sheet as SVG in mm: grid and labels, header, legend, scale bar, north diagram, grid reference box, attribution |
 | `src/print/render-map.ts` | Off-screen map render of the frame at a given DPI, tiled when needed |
 | `src/print/export.ts` | PDF export (jsPDF + svg2pdf.js) and PNG export |

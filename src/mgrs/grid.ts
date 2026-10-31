@@ -41,11 +41,43 @@ const ZONE_CELLS: ZoneCell[] = (() => {
   return cells
 })()
 
+function cellAt(lon: number, lat: number) {
+  return ZONE_CELLS.find((c) => lon >= c.west && lon < c.east && lat >= c.south && lat < c.north)
+}
+
 /** UTM zone for a lon/lat, honouring the Norway and Svalbard exceptions. */
 export function zoneFor(lon: number, lat: number): { zone: number; south: boolean } {
-  const cell = ZONE_CELLS.find((c) => lon >= c.west && lon < c.east && lat >= c.south && lat < c.north)
-  const zone = cell?.zone ?? Math.min(60, Math.max(1, Math.floor((lon + 180) / 6) + 1))
+  const zone = cellAt(lon, lat)?.zone ?? Math.min(60, Math.max(1, Math.floor((lon + 180) / 6) + 1))
   return { zone, south: lat < 0 }
+}
+
+/** Grid zone designator for a lon/lat, e.g. "33V", or null outside MGRS's UTM area. */
+export function gzdAt(lon: number, lat: number): string | null {
+  const cell = cellAt(lon, lat)
+  return cell ? `${cell.zone}${cell.band}` : null
+}
+
+/** A grid zone designator cell edge: part of a meridian (`value` = lon) or a parallel (`value` = lat). */
+export interface GzdEdge {
+  kind: 'meridian' | 'parallel'
+  value: number
+  /** Extent along the edge: latitudes for a meridian, longitudes for a parallel. */
+  from: number
+  to: number
+}
+
+/**
+ * West and south edges of the GZD cells overlapping `b`, trimmed to `b`. Together they include every
+ * boundary between cells in the area (each shared edge once); callers check which ones separate zones.
+ */
+export function gzdEdges(b: Bounds): GzdEdge[] {
+  const edges: GzdEdge[] = []
+  for (const c of ZONE_CELLS) {
+    if (c.east <= b.west || c.west >= b.east || c.north <= b.south || c.south >= b.north) continue
+    if (c.west > b.west) edges.push({ kind: 'meridian', value: c.west, from: Math.max(c.south, b.south), to: Math.min(c.north, b.north) })
+    if (c.south > b.south) edges.push({ kind: 'parallel', value: c.south, from: Math.max(c.west, b.west), to: Math.min(c.east, b.east) })
+  }
+  return edges
 }
 
 const converters = new Map<string, proj4.Converter>()

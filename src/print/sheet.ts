@@ -36,15 +36,16 @@ export const CONTOUR_INTERVAL: Record<Scale, number> = { 10_000: 5, 25_000: 10, 
 export const GRID_SPACING: Record<Scale, number> = { 10_000: 100, 25_000: 1_000, 50_000: 1_000 }
 
 /** Marginal information blocks below the map frame, in layout order. Sizes in mm. */
-export type BlockId = 'legend' | 'scale' | 'north' | 'gridref'
+export type BlockId = 'legend' | 'scale' | 'north' | 'squares' | 'gridref'
 const BLOCKS: { id: BlockId; width: number }[] = [
   { id: 'legend', width: 62 },
   { id: 'scale', width: 66 },
   { id: 'north', width: 34 },
+  { id: 'squares', width: 34 },
   { id: 'gridref', width: 62 },
 ]
 export const BLOCK_HEIGHT = 34
-const BLOCK_GAP = 6
+const BLOCK_GAP = 4
 const ROW_GAP = 4
 /** Room for grid labels outside the neatline. */
 export const LABEL_BAND = 5

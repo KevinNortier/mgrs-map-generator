@@ -1,7 +1,8 @@
 import { forward as toMgrs } from 'mgrs'
 import type { Palette, SheetLayers } from '../map/style'
-import { formatMgrs } from '../mgrs/grid'
-import { formatAngle, northInfo, type NorthInfo } from './north'
+import { formatMgrs, utm, zoneFor } from '../mgrs/grid'
+import { convergenceAt, formatAngle, northInfo, type NorthInfo } from './north'
+import { sheetZones, type Pt, type SheetZones, type SquareRegion } from './sheet-zones'
 import { resolveExample, type ResolvedExample } from './example'
 import { CONTOUR_INTERVAL, GRID_SPACING, sheetGrid, sheetLayout, type Sheet, type SheetLayout } from './sheet'
 
@@ -43,6 +44,7 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
   const grid = sheetGrid(sheet)
   const north = northInfo(sheet, date)
   const example = resolveExample(sheet, sheet.example)
+  const zones = sheetZones(sheet)
   // Switched-off layers are left out: the grid and its labels, contour legend entries and notes.
   const { layers } = sheet
   const parts: string[] = []
@@ -62,15 +64,19 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
     parts.push(text(frame.x + frame.width / 2, frame.y + frame.height / 2, 'Rendering map…', 4, `text-anchor="middle" fill="#888"`))
   }
 
-  if (layers.grid) parts.push(renderGrid(sheet, layout, grid))
+  if (layers.grid) parts.push(renderGrid(layout, zones), renderSquareLabels(zones))
+  // The junction is shown even without the grid: it tells which zone's references apply where.
+  parts.push(renderJunctions(zones))
   if (example) parts.push(renderExampleMarker(example, sheet, layout, grid))
   parts.push(`<rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" fill="none" stroke="${INK}" stroke-width="0.35"/>`)
 
-  parts.push(renderHeader(sheet, layout, grid))
+  const zoneNames = zones.zones.map((z) => z.zone).sort((a, b) => a - b).map((z) => `${z}${grid.south ? 'S' : 'N'}`)
+  parts.push(renderHeader(sheet, layout, zones, zoneNames))
   for (const box of layout.blocks) {
     if (box.id === 'legend') parts.push(renderLegend(box, palette, layers))
-    if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, grid.zone, grid.south, layers.contours))
+    if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, zoneNames, layers.contours))
     if (box.id === 'north') parts.push(renderNorth(box, north))
+    if (box.id === 'squares') parts.push(renderSquaresBlock(box, sheet, layout, zones, north))
     if (box.id === 'gridref') parts.push(renderGridRef(box, sheet, grid, example))
   }
   parts.push(renderFooter(layout, date))
@@ -123,68 +129,237 @@ function fullValue(x: number, y: number, value: number, suffix: string) {
   }
 }
 
-function renderGrid(sheet: Sheet, layout: SheetLayout, grid: Grid) {
+type Edge = 'top' | 'bottom' | 'left' | 'right'
+
+/** A grid line end on the frame edge, to be labelled. `pos` runs along the edge (x on top/bottom, y on left/right). */
+interface EdgeLabel {
+  edge: Edge
+  pos: number
+  value: number
+}
+
+/** SVG path for a polyline; straight runs only need their ends. */
+function polyline(pts: Pt[], straight: boolean, width: number, attrs = '') {
+  const p = straight ? [pts[0], pts[pts.length - 1]] : pts
+  return `<path d="M${p.map(([x, y]) => `${f(x)} ${f(y)}`).join('L')}" fill="none" stroke="${INK}" stroke-width="${width}" ${attrs}/>`
+}
+
+/**
+ * The grid of each zone on the sheet, clipped to that zone, with edge labels where its lines meet the
+ * frame. Full values (small leading and trailing figures) go on the km lines nearest the ends of each
+ * zone's stretch of an edge; vertically along the side margin for northings. Labels that would
+ * collide, e.g. on both sides of a zone junction, give way to those of the primary zone.
+ */
+function renderGrid(layout: SheetLayout, zones: SheetZones) {
   const { frame } = layout
-  const spacing = GRID_SPACING[sheet.scale]
-  const out: string[] = ['<g>']
+  const right = frame.x + frame.width
   const bottom = frame.y + frame.height
-
-  const eastings: number[] = []
-  for (let e = Math.ceil(grid.minE / spacing) * spacing; e <= grid.maxE; e += spacing) eastings.push(e)
-  const northings: number[] = []
-  for (let n = Math.ceil(grid.minN / spacing) * spacing; n <= grid.maxN; n += spacing) northings.push(n)
-
   const isKm = (v: number) => Math.round(v) % 1000 === 0
-  // Full values go on the km lines nearest the corners: the first and last along each edge.
-  const kmEastings = eastings.filter(isKm)
-  const kmNorthings = northings.filter(isKm)
-  const fullEastings = new Set([kmEastings[0], kmEastings[kmEastings.length - 1]])
-  const fullNorthings = { south: kmNorthings[0], north: kmNorthings[kmNorthings.length - 1] }
+  const out: string[] = ['<g>']
 
-  for (const e of eastings) {
-    const [x] = toPaper(layout, grid, sheet.scale, e, grid.minN)
-    out.push(line(x, frame.y, x, bottom, isKm(e) ? 0.15 : 0.08))
-    const d = splitDigits(e)
-    if (!isKm(e)) {
-      out.push(text(x, frame.y - 1.2, d.hundreds, LABEL_SMALL, 'text-anchor="middle"'))
-      out.push(text(x, bottom + 2.6, d.hundreds, LABEL_SMALL, 'text-anchor="middle"'))
-    } else if (fullEastings.has(e)) {
-      // Large digits centred on the line, as for the other km lines
-      const start = x - textWidth(d.principal, LABEL_BIG) / 2
-      out.push(fullValue(start, frame.y - 1.2, e, 'E').svg)
-      out.push(fullValue(start, bottom + 3.2, e, 'E').svg)
-    } else {
-      out.push(text(x, frame.y - 1.2, d.principal, LABEL_BIG, 'text-anchor="middle" font-weight="bold"'))
-      out.push(text(x, bottom + 3.2, d.principal, LABEL_BIG, 'text-anchor="middle" font-weight="bold"'))
-    }
+  const edgeOf = ([x, y]: Pt): Edge | null => {
+    const tol = 0.01
+    if (Math.abs(y - frame.y) < tol) return 'top'
+    if (Math.abs(y - bottom) < tol) return 'bottom'
+    if (Math.abs(x - frame.x) < tol) return 'left'
+    if (Math.abs(x - right) < tol) return 'right'
+    return null
   }
 
-  // Full northings are written vertically in the narrow side margin, reading upwards, clear of the
-  // small 100 m digits next to the frame: above the line near the bottom corner, below it near the top.
-  const verticalX = frame.x - 3.4
-  for (const n of northings) {
-    const [, y] = toPaper(layout, grid, sheet.scale, grid.minE, n)
-    out.push(line(frame.x, y, frame.x + frame.width, y, isKm(n) ? 0.15 : 0.08))
-    const d = splitDigits(n)
-    if (!isKm(n)) {
-      out.push(text(frame.x - 1, y + 0.6, d.hundreds, LABEL_SMALL, 'text-anchor="end"'))
-      out.push(text(frame.x + frame.width + 1, y + 0.6, d.hundreds, LABEL_SMALL))
-      continue
+  // Occupied intervals along each label band, to keep labels apart
+  const placed = new Map<string, [number, number][]>()
+  const GAP = 0.6
+  const tryPlace = (band: string, a: number, b: number) => {
+    const list = placed.get(band) ?? []
+    if (list.some(([c, d]) => a < d + GAP && b > c - GAP)) return false
+    list.push([a, b])
+    placed.set(band, list)
+    return true
+  }
+
+  const capBig = 0.72 * LABEL_BIG
+  // Horizontal full value: where the large digits start, and its extent along the edge
+  const fullE = (pos: number, value: number) => {
+    const probe = fullValue(0, 0, value, 'E')
+    const start = pos - probe.principalWidth / 2
+    return { start, a: start - probe.leadingWidth, b: start - probe.leadingWidth + probe.width }
+  }
+  // Vertical full northing beside the line: above it (south end of the side) or below it (north end)
+  const fullN = (pos: number, value: number, above: boolean) => {
+    const probe = fullValue(0, 0, value, 'N')
+    return above ? { a: pos - 2 - probe.width, b: pos - 2, probe } : { a: pos + 2, b: pos + 2 + probe.width, probe }
+  }
+
+  for (const z of zones.zones) {
+    const labels: EdgeLabel[] = []
+    for (const l of z.lines) {
+      for (const run of l.runs) {
+        out.push(polyline(run, l.straight, isKm(l.value) ? 0.15 : 0.08))
+        for (const p of [run[0], run[run.length - 1]]) {
+          const edge = edgeOf(p)
+          if (l.axis === 'e' && (edge === 'top' || edge === 'bottom')) labels.push({ edge, pos: p[0], value: l.value })
+          if (l.axis === 'n' && (edge === 'left' || edge === 'right')) labels.push({ edge, pos: p[1], value: l.value })
+        }
+      }
     }
-    out.push(text(frame.x - 1, y + 0.9, d.principal, LABEL_BIG, 'text-anchor="end" font-weight="bold"'))
-    out.push(text(frame.x + frame.width + 1, y + 0.9, d.principal, LABEL_BIG, 'font-weight="bold"'))
-    const atSouth = n === fullNorthings.south
-    const atNorth = n === fullNorthings.north && !atSouth
-    if (atSouth || atNorth) {
-      // In rotated coordinates, +x runs up the page. Start 2 mm above the line, or end 2 mm below it.
-      const probe = fullValue(0, 0, n, 'N')
-      const along = atSouth ? -(y - 2) : -(y + 2) - probe.width
-      const label = fullValue(along + probe.leadingWidth, 0, n, 'N')
-      out.push(`<g transform="translate(${f(verticalX)} 0) rotate(-90)">${label.svg}</g>`)
+
+    // Eastings along the top and bottom
+    for (const edge of ['top', 'bottom'] as const) {
+      const onEdge = labels.filter((l) => l.edge === edge).sort((a, b) => a.pos - b.pos)
+      const y = edge === 'top' ? frame.y - 1.2 : bottom + 3.2
+      const km = onEdge.filter((l) => isKm(l.value))
+      const full = new Set<EdgeLabel>()
+      for (const candidates of [km, [...km].reverse()]) {
+        for (const l of candidates) {
+          if (full.has(l)) break
+          const { start, a, b } = fullE(l.pos, l.value)
+          if (tryPlace(edge, a, b)) {
+            out.push(fullValue(start, y, l.value, 'E').svg)
+            full.add(l)
+            break
+          }
+        }
+      }
+      for (const l of onEdge) {
+        if (full.has(l)) continue
+        const d = splitDigits(l.value)
+        if (isKm(l.value)) {
+          const w = textWidth(d.principal, LABEL_BIG) / 2
+          if (tryPlace(edge, l.pos - w, l.pos + w)) out.push(text(l.pos, y, d.principal, LABEL_BIG, 'text-anchor="middle" font-weight="bold"'))
+        } else {
+          const w = textWidth(d.hundreds, LABEL_SMALL) / 2
+          if (tryPlace(edge, l.pos - w, l.pos + w)) out.push(text(l.pos, edge === 'top' ? y : bottom + 2.6, d.hundreds, LABEL_SMALL, 'text-anchor="middle"'))
+        }
+      }
+    }
+
+    // Northings along the sides; large digits are about 2 mm tall
+    for (const edge of ['left', 'right'] as const) {
+      for (const l of labels.filter((l) => l.edge === edge)) {
+        const d = splitDigits(l.value)
+        const km = isKm(l.value)
+        if (!tryPlace(edge, l.pos - (km ? 1.2 : 0.8), l.pos + (km ? 1.2 : 0.8))) continue
+        const attrs = edge === 'left' ? 'text-anchor="end"' : ''
+        const x = edge === 'left' ? frame.x - 1 : right + 1
+        if (km) out.push(text(x, l.pos + 0.9, d.principal, LABEL_BIG, `${attrs} font-weight="bold"`))
+        else out.push(text(x, l.pos + 0.6, d.hundreds, LABEL_SMALL, attrs))
+      }
+    }
+
+    // Full northings written vertically in the side margin, reading upwards, clear of the small 100 m
+    // digits next to the frame: above the line near the bottom corner, below it near the top. On the
+    // left side when the zone reaches it, otherwise on the right.
+    const side: Edge = labels.some((l) => l.edge === 'left' && isKm(l.value)) ? 'left' : 'right'
+    const kmN = labels.filter((l) => l.edge === side && isKm(l.value)).sort((a, b) => b.pos - a.pos) // south first
+    // In rotated coordinates +x runs up the page; glyphs sit left of the baseline.
+    const verticalX = side === 'left' ? frame.x - 3.4 : right + 3.4 + capBig
+    const done = new Set<EdgeLabel>()
+    for (const [candidates, above] of [
+      [kmN, true],
+      [[...kmN].reverse(), false],
+    ] as const) {
+      for (const l of candidates) {
+        if (done.has(l)) break
+        const { a, b, probe } = fullN(l.pos, l.value, above)
+        if (!tryPlace(`${side}-vertical`, a, b)) continue
+        const label = fullValue(-b + probe.leadingWidth, 0, l.value, 'N')
+        out.push(`<g transform="translate(${f(verticalX)} 0) rotate(-90)">${label.svg}</g>`)
+        done.add(l)
+        break
+      }
     }
   }
 
   out.push('</g>')
+  return out.join('')
+}
+
+/** Approximate width of bold capitals and digits. */
+const boldWidth = (s: string, size: number) => s.length * 0.68 * size
+
+/** Text with a white backing box, for labels on the map face. */
+function boxedText(x: number, y: number, s: string, size: number, anchor: 'start' | 'middle' | 'end', attrs = '') {
+  const w = boldWidth(s, size)
+  const left = anchor === 'start' ? x : anchor === 'middle' ? x - w / 2 : x - w
+  return (
+    `<rect x="${f(left - 0.5)}" y="${f(y - size * 0.8)}" width="${f(w + 1)}" height="${f(size * 1.05)}" fill="#ffffff" fill-opacity="0.85"/>` +
+    text(x, y, esc(s), size, `text-anchor="${anchor}" ${attrs}`)
+  )
+}
+
+/** Points spread along a polyline (by length), with the direction there. */
+function pointsAlong(run: Pt[], fractions: number[]) {
+  const seg = run.slice(1).map((p, i) => Math.hypot(p[0] - run[i][0], p[1] - run[i][1]))
+  const total = seg.reduce((s, l) => s + l, 0)
+  return fractions.map((t) => {
+    let d = t * total
+    let i = 0
+    while (i < seg.length - 1 && d > seg[i]) d -= seg[i++]
+    const [a, b] = [run[i], run[i + 1]]
+    const len = seg[i] || 1
+    const u = d / len
+    return { p: [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u] as Pt, dir: [(b[0] - a[0]) / len, (b[1] - a[1]) / len] as Pt, total }
+  })
+}
+
+/**
+ * 100 km square letters on the map face, on both sides of each 100 km line and of a zone junction
+ * (with the grid zone there), repeated along long lines.
+ */
+function renderSquareLabels(zones: SheetZones) {
+  const lines: { run: Pt[]; junction: boolean }[] = [
+    ...zones.zones.flatMap((z) =>
+      z.lines.filter((l) => Math.round(l.value) % 100_000 === 0).flatMap((l) => l.runs.map((run) => ({ run, junction: false }))),
+    ),
+    ...zones.junctions.map((run) => ({ run, junction: true })),
+  ]
+  const out: string[] = []
+  const SIZE = 2.8
+  for (const { run, junction } of lines) {
+    const total = pointsAlong(run, [0])[0].total
+    const count = Math.max(1, Math.round(total / 100))
+    const fractions = Array.from({ length: count }, (_, i) => (i + 0.5) / count)
+    for (const { p, dir } of pointsAlong(run, fractions)) {
+      const normal: Pt = [-dir[1], dir[0]]
+      const sideA: Pt = [p[0] + normal[0] * 4, p[1] + normal[1] * 4]
+      const sideB: Pt = [p[0] - normal[0] * 4, p[1] - normal[1] * 4]
+      if (!zones.inFrame(sideA) || !zones.inFrame(sideB)) continue
+      const a = zones.squareAt(sideA)
+      const b = zones.squareAt(sideB)
+      if (!a || !b || a === b) continue
+      const label = (id: string) => (junction ? id : id.split(' ')[1])
+      const vertical = Math.abs(dir[1]) > Math.abs(dir[0])
+      // Order the two sides: left then right, or above then below
+      const [first, second] = (vertical ? sideA[0] < sideB[0] : sideA[1] < sideB[1]) ? [a, b] : [b, a]
+      if (vertical) {
+        out.push(boxedText(p[0] - 1.5, p[1] + 1, label(first), SIZE, 'end', 'font-weight="bold"'))
+        out.push(boxedText(p[0] + 1.5, p[1] + 1, label(second), SIZE, 'start', 'font-weight="bold"'))
+      } else {
+        out.push(boxedText(p[0], p[1] - 1.5, label(first), SIZE, 'middle', 'font-weight="bold"'))
+        out.push(boxedText(p[0], p[1] + 1.5 + SIZE * 0.72, label(second), SIZE, 'middle', 'font-weight="bold"'))
+      }
+    }
+  }
+  return out.join('')
+}
+
+/** Grid zone junctions: a heavy line, named along its length. */
+function renderJunctions(zones: SheetZones) {
+  const out: string[] = []
+  for (const run of zones.junctions) {
+    out.push(polyline(run, false, 0.4))
+    const [{ p, dir, total }] = pointsAlong(run, [0.1])
+    if (total < 40) continue
+    let angle = (Math.atan2(dir[1], dir[0]) * 180) / Math.PI
+    // Keep the text upright: reading upwards or rightwards
+    if (angle > 90) angle -= 180
+    if (angle <= -90) angle += 180
+    out.push(
+      `<g transform="translate(${f(p[0])} ${f(p[1])}) rotate(${f(angle)})">` +
+        boxedText(0, -0.9, 'GRID ZONE JUNCTION', 1.8, 'middle', 'font-style="italic"') +
+        '</g>',
+    )
+  }
   return out.join('')
 }
 
@@ -203,28 +378,17 @@ function renderExampleMarker(example: ResolvedExample, sheet: Sheet, layout: She
   )
 }
 
-function renderHeader(sheet: Sheet, layout: SheetLayout, grid: Grid) {
+function renderHeader(sheet: Sheet, layout: SheetLayout, zones: SheetZones, zoneNames: string[]) {
   const { frame } = layout
   const right = frame.x + frame.width
-  const squares = new Set<string>()
-  for (const [e, n] of [
-    [grid.minE, grid.minN],
-    [grid.maxE, grid.minN],
-    [grid.minE, grid.maxN],
-    [grid.maxE, grid.maxN],
-  ]) {
-    try {
-      squares.add(formatMgrs(toMgrs(grid.conv.inverse([e, n]) as [number, number], 0)))
-    } catch {
-      // outside MGRS coverage
-    }
-  }
+  const squares = zones.regions.map((r) => r.id).sort()
   const title = sheet.title.trim() || 'Untitled sheet'
+  const utmZones = zoneNames.length > 1 ? `UTM ZONES ${zoneNames.join(' / ')}` : `UTM ZONE ${zoneNames[0]}`
   return (
     text(frame.x, 8.5, esc(title.toUpperCase()), 5.5, 'font-weight="bold"') +
     text(frame.x, 12.2, `SCALE ${formatScale(sheet.scale)}`, 2.6) +
-    text(right, 8.5, [...squares].join(' · '), 3.4, 'text-anchor="end" font-weight="bold"') +
-    text(right, 12.2, `WGS 84 · UTM ZONE ${grid.zone}${grid.south ? 'S' : 'N'} · MGRS`, 2.4, 'text-anchor="end"')
+    text(right, 8.5, squares.join(' · '), 3.4, 'text-anchor="end" font-weight="bold"') +
+    text(right, 12.2, `WGS 84 · ${utmZones} · MGRS`, 2.4, 'text-anchor="end"')
   )
 }
 
@@ -291,7 +455,7 @@ function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
   return out.join('')
 }
 
-function renderScaleBlock(box: Box, sheet: Sheet, zone: number, south: boolean, contours: boolean) {
+function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours: boolean) {
   const out = [text(box.x + box.width / 2, box.y + 3.2, `SCALE ${formatScale(sheet.scale)}`, 3.4, 'text-anchor="middle" font-weight="bold"')]
 
   // Scale bar: one subdivided unit to the left of zero, two whole units to the right. 1 unit = 20 mm.
@@ -322,7 +486,7 @@ function renderScaleBlock(box: Box, sheet: Sheet, zone: number, south: boolean, 
   const notes = [
     ...contourNotes,
     'Horizontal datum: World Geodetic System 1984 (WGS 84)',
-    `Projection: Universal Transverse Mercator, zone ${zone}${south ? 'S' : 'N'}`,
+    `Projection: Universal Transverse Mercator, zone${zoneNames.length > 1 ? 's' : ''} ${zoneNames.join(' and ')}`,
     `Grid: ${GRID_SPACING[sheet.scale] >= 1000 ? '1 kilometre' : '100 metre'} UTM grid, MGRS references`,
   ]
   notes.forEach((n, i) => {
@@ -393,6 +557,113 @@ function star(cx: number, cy: number, r: number) {
   return `<polygon points="${pts.join(' ')}" fill="${INK}"/>`
 }
 
+/**
+ * The grid zone designation and 100 km square identification: a small diagram of the sheet divided
+ * into its 100 km squares (and grid zones), and the grid–magnetic angle of each zone's grid.
+ */
+function renderSquaresBlock(box: Box, sheet: Sheet, layout: SheetLayout, zones: SheetZones, north: NorthInfo) {
+  const { frame } = layout
+  const out = [blockTitle(box, '100 KM SQUARES')]
+  const gzds = [...new Set(zones.regions.map((r) => r.gzd))].sort()
+  const twoLine = gzds.length > 1
+  // Label size in the diagram: the grid zone above the square letters when the sheet has several
+  const LW = 3.2
+  const LH = twoLine ? 3.4 : 1.8
+  const oy = box.y + 4.5
+
+  // Squares too small for their label get it beside the diagram, with a leader line. Room for those
+  // labels is reserved on that side, which can shrink the diagram, so the fit is checked again.
+  type Side = 'left' | 'right'
+  let reserve: Record<Side, number> = { left: 0, right: 0 }
+  let s = 0
+  let ox = 0
+  let outside: { r: SquareRegion; side: Side }[] = []
+  for (let pass = 0; pass < 3; pass++) {
+    s = Math.min((box.width - 2 - reserve.left - reserve.right) / frame.width, 17 / frame.height)
+    const w = frame.width * s
+    ox = Math.min(Math.max(box.x + (box.width - w) / 2, box.x + 1 + reserve.left), box.x + box.width - 1 - reserve.right - w)
+    const fits = (r: SquareRegion) => {
+      const cx = ox + (r.x - frame.x) * s
+      const cy = oy + (r.y - frame.y) * s
+      const probes: Pt[] = [-1, 0, 1].flatMap((i) => [-1, 0, 1].map((j) => [cx + (i * (LW + 0.6)) / 2, cy + (j * (LH + 0.4)) / 2] as Pt))
+      return probes.every(([x, y]) => {
+        const p: Pt = [frame.x + (x - ox) / s, frame.y + (y - oy) / s]
+        return zones.inFrame(p) && zones.squareAt(p) === r.id
+      })
+    }
+    outside = zones.regions
+      .filter((r) => !fits(r))
+      .map((r) => {
+        const right = frame.x + frame.width
+        const side: Side =
+          r.bounds[2] >= right - 0.01 && r.bounds[0] > frame.x + 0.01 ? 'right' : r.bounds[0] <= frame.x + 0.01 && r.bounds[2] < right - 0.01 ? 'left' : r.x > frame.x + frame.width / 2 ? 'right' : 'left'
+        return { r, side }
+      })
+    const next: Record<Side, number> = {
+      left: outside.some((o) => o.side === 'left') ? LW + 1.6 : 0,
+      right: outside.some((o) => o.side === 'right') ? LW + 1.6 : 0,
+    }
+    if (next.left === reserve.left && next.right === reserve.right) break
+    reserve = next
+  }
+  const w = frame.width * s
+  const h = frame.height * s
+  const tr = (run: Pt[]) => run.map(([x, y]) => [ox + (x - frame.x) * s, oy + (y - frame.y) * s] as Pt)
+
+  out.push(`<rect x="${f(ox)}" y="${f(oy)}" width="${f(w)}" height="${f(h)}" fill="#ffffff" stroke="${INK}" stroke-width="0.2"/>`)
+  for (const z of zones.zones) {
+    for (const l of z.lines) {
+      if (Math.round(l.value) % 100_000 !== 0) continue
+      for (const run of l.runs) out.push(polyline(tr(run), l.straight, 0.15))
+    }
+  }
+  for (const run of zones.bandEdges) out.push(polyline(tr(run), false, 0.15, 'stroke-dasharray="0.6 0.4"'))
+  for (const run of zones.junctions) out.push(polyline(tr(run), false, 0.35))
+
+  // A label centred on (x, y)
+  const label = (r: SquareRegion, x: number, y: number) =>
+    twoLine
+      ? text(x, y - 0.4, r.gzd, 1.3, 'text-anchor="middle"') + text(x, y + 1.6, r.square, 2, 'text-anchor="middle" font-weight="bold"')
+      : text(x, y + 0.7, r.square, 2, 'text-anchor="middle" font-weight="bold"')
+
+  for (const r of zones.regions) {
+    if (outside.some((o) => o.r === r)) continue
+    const [[x, y]] = tr([[r.x, r.y]])
+    out.push(label(r, x, y))
+  }
+
+  // Outside labels: level with their square where possible, stacked without overlapping
+  for (const side of ['left', 'right'] as const) {
+    const list = outside
+      .filter((o) => o.side === side)
+      .map((o) => ({ r: o.r, anchor: tr([[o.r.x, o.r.y]])[0], y: 0 }))
+      .sort((a, b) => a.anchor[1] - b.anchor[1])
+    const top = oy + LH / 2
+    const bottom = oy + h - LH / 2
+    list.forEach((o, i) => (o.y = Math.max(Math.min(Math.max(o.anchor[1], top), bottom), i ? list[i - 1].y + LH + 0.6 : -Infinity)))
+    for (let i = list.length - 1; i >= 0; i--) {
+      list[i].y = Math.min(list[i].y, i < list.length - 1 ? list[i + 1].y - LH - 0.6 : Math.max(bottom, list[i].y))
+    }
+    for (const o of list) {
+      const x = side === 'right' ? ox + w + 1.2 + LW / 2 : ox - 1.2 - LW / 2
+      const edge = side === 'right' ? x - LW / 2 - 0.2 : x + LW / 2 + 0.2
+      out.push(line(edge, o.y, o.anchor[0], o.anchor[1], 0.1))
+      out.push(`<circle cx="${f(o.anchor[0])}" cy="${f(o.anchor[1])}" r="0.25" fill="${INK}"/>`)
+      out.push(label(o.r, x, o.y))
+    }
+  }
+
+  const notes = [`Grid zone designation: ${gzds.join(', ')}`]
+  if (zones.zones.length > 1) {
+    // Each zone's grid has its own convergence, so its own grid–magnetic angle
+    for (const z of [...zones.zones].sort((a, b) => a.zone - b.zone)) {
+      notes.push(`G–M zone ${z.zone}: ${formatAngle(north.declination - convergenceAt(z.conv, sheet.center))}`)
+    }
+  }
+  notes.forEach((n, i) => out.push(text(box.x, oy + h + 2.8 + i * 2.3, esc(n), 1.6)))
+  return out.join('')
+}
+
 function renderGridRef(box: Box, sheet: Sheet, grid: Grid, example: ResolvedExample | null) {
   const spacing = GRID_SPACING[sheet.scale]
   const figures = spacing === 100 ? 4 : 3 // digits per axis: 6-figure reference on 1 km grids, 8-figure on 100 m grids
@@ -416,7 +687,9 @@ function renderGridRef(box: Box, sheet: Sheet, grid: Grid, example: ResolvedExam
     return out.join('')
   }
 
-  const [e, n] = grid.conv.forward(example.point)
+  // Read in the grid of the zone the point lies in, which is the grid printed around it
+  const conv = utm(zoneFor(example.point[0], example.point[1]).zone, grid.south)
+  const [e, n] = conv.forward(example.point)
   const lineDigits = figures - 1
   const axis = (v: number) => {
     const lineValue = Math.floor(v / spacing)
