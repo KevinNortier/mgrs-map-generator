@@ -20,7 +20,13 @@ export interface Sheet {
   style: MapStyleId
   /** Hillshade, contours and grid on or off, on screen and in print. */
   layers: SheetLayers
+  /** Scale bars in the margin. */
+  scaleBars: ScaleBars
 }
+
+/** Metric bar (metres or kilometres), imperial bar (yards or statute miles), or both. */
+export type ScaleBars = 'metric' | 'imperial' | 'both'
+export const SCALE_BARS: ScaleBars[] = ['metric', 'imperial', 'both']
 
 export const PAPERS: Record<Paper, { width: number; height: number }> = {
   a4: { width: 210, height: 297 },
@@ -38,11 +44,11 @@ export const GRID_SPACING: Record<Scale, number> = { 10_000: 100, 25_000: 1_000,
 /** Marginal information blocks below the map frame, in layout order. Sizes in mm. */
 export type BlockId = 'legend' | 'scale' | 'north' | 'squares' | 'gridref'
 const BLOCKS: { id: BlockId; width: number }[] = [
-  { id: 'legend', width: 62 },
-  { id: 'scale', width: 66 },
-  { id: 'north', width: 34 },
+  { id: 'legend', width: 56 },
+  { id: 'scale', width: 64 },
+  { id: 'north', width: 48 },
   { id: 'squares', width: 34 },
-  { id: 'gridref', width: 62 },
+  { id: 'gridref', width: 56 },
 ]
 export const BLOCK_HEIGHT = 34
 const BLOCK_GAP = 4
@@ -198,6 +204,7 @@ export function readSheetFromHash(fallback: Sheet): Sheet {
     example: params.has('ex') ? decodeExample(params.get('ex'), decodeText) : fallback.example,
     style: params.get('style') === 'orienteering' ? 'orienteering' : fallback.style,
     layers: params.has('hide') ? decodeHidden(params.get('hide')!) : fallback.layers,
+    scaleBars: SCALE_BARS.includes(params.get('bars') as ScaleBars) ? (params.get('bars') as ScaleBars) : fallback.scaleBars,
   }
 }
 
@@ -215,6 +222,8 @@ export function writeSheetToHash(sheet: Sheet) {
   const hidden = SHEET_LAYER_GROUPS.filter((g) => !sheet.layers[g])
   if (hidden.length) params.set('hide', hidden.join(','))
   else params.delete('hide')
+  if (sheet.scaleBars !== 'metric') params.set('bars', sheet.scaleBars)
+  else params.delete('bars')
   // Keep the hash readable: MapLibre's own entry uses literal slashes.
   history.replaceState(history.state, '', `#${decodeURIComponent(params.toString())}`)
 }

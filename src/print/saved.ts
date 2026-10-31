@@ -1,6 +1,6 @@
 import { ALL_LAYERS, SHEET_LAYER_GROUPS, type SheetLayers } from '../map/style'
 import { DEFAULT_EXAMPLE, type ExampleSetting } from './example'
-import { PAPERS, SCALES, type Orientation, type Paper, type Scale, type Sheet } from './sheet'
+import { PAPERS, SCALE_BARS, SCALES, type Orientation, type Paper, type Scale, type ScaleBars, type Sheet } from './sheet'
 
 /** A sheet saved in this browser ("My maps"). */
 export interface SavedMap {
@@ -57,6 +57,7 @@ export function parseSheet(v: unknown): Sheet | null {
     example: parseExample(o.example),
     style: o.style === 'orienteering' ? 'orienteering' : 'military',
     layers: parseLayers(o.layers),
+    scaleBars: SCALE_BARS.includes(o.scaleBars as ScaleBars) ? (o.scaleBars as ScaleBars) : 'metric',
   }
 }
 

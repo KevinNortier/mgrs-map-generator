@@ -22,6 +22,7 @@ import {
 import {
   CONTOUR_INTERVAL,
   GRID_SPACING,
+  SCALE_BARS,
   SCALES,
   frameSizeMm,
   groundSizeM,
@@ -63,6 +64,7 @@ const sheet = reactive<Sheet>(
     example: { ...DEFAULT_EXAMPLE },
     style: 'military',
     layers: { ...ALL_LAYERS },
+    scaleBars: 'metric',
   }),
 )
 
@@ -428,6 +430,14 @@ onBeforeUnmount(() => map.value?.remove())
           <div class="segmented">
             <button v-for="s in SCALES" :key="s" :class="{ active: sheet.scale === s }" @click="sheet.scale = s">
               {{ formatScale(s) }}
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Scale bars</span>
+          <div class="segmented">
+            <button v-for="b in SCALE_BARS" :key="b" :class="{ active: sheet.scaleBars === b }" @click="sheet.scaleBars = b">
+              {{ b[0].toUpperCase() + b.slice(1) }}
             </button>
           </div>
         </div>

@@ -79,6 +79,9 @@ const NAME: ExpressionSpecification = ['coalesce', ['get', 'name:latin'], ['get'
 const MAJOR_ROADS = ['motorway', 'trunk', 'primary', 'secondary']
 const MINOR_ROADS = ['tertiary', 'minor', 'service']
 
+/** OpenFreeMap vector tiles (OpenMapTiles schema): TileJSON pointing at the current build. */
+export const VECTOR_TILES_URL = 'https://tiles.openfreemap.org/planet'
+
 function baseStyle(p: Palette, contourInterval?: number): StyleSpecification {
   return {
     version: 8,
@@ -86,7 +89,7 @@ function baseStyle(p: Palette, contourInterval?: number): StyleSpecification {
     sources: {
       openmaptiles: {
         type: 'vector',
-        url: 'https://tiles.openfreemap.org/planet',
+        url: VECTOR_TILES_URL,
         attribution:
           '<a href="https://openfreemap.org">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       },

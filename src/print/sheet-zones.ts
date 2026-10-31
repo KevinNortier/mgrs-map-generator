@@ -57,7 +57,12 @@ export interface SheetZones {
   regions: SquareRegion[]
   /** Full GZD and square at a paper point, e.g. "32V PJ". */
   squareAt(p: Pt): string | null
+  /** UTM zone number at a paper point. */
+  zoneAt(p: Pt): number
   inFrame(p: Pt): boolean
+  /** Paper point ↔ lon/lat. */
+  toLonLat(p: Pt): Pt
+  toPaper(lonLat: Pt): Pt
 }
 
 /** Splits a polyline into the parts where `inside` holds, finding each crossing by bisection. */
@@ -251,5 +256,5 @@ export function sheetZones(sheet: Sheet): SheetZones {
     })
     .sort((a, b) => b.share - a.share)
 
-  return { zones, junctions, bandEdges, regions, squareAt, inFrame }
+  return { zones, junctions, bandEdges, regions, squareAt, zoneAt, inFrame, toLonLat, toPaper }
 }

@@ -1,7 +1,7 @@
 import { forward as toMgrs } from 'mgrs'
 import type { Palette, SheetLayers } from '../map/style'
 import { formatMgrs, utm, zoneFor } from '../mgrs/grid'
-import { convergenceAt, formatAngle, northInfo, type NorthInfo } from './north'
+import { convergenceAt, formatAngle, northInfo, toMils, type NorthInfo } from './north'
 import { sheetZones, type Pt, type SheetZones, type SquareRegion } from './sheet-zones'
 import { resolveExample, type ResolvedExample } from './example'
 import { CONTOUR_INTERVAL, GRID_SPACING, sheetGrid, sheetLayout, type Sheet, type SheetLayout } from './sheet'
@@ -21,6 +21,8 @@ export interface SheetSvgOptions {
   /** Only the vector overlay (no paper background or map image), for drawing on top of a separately placed map. */
   overlay?: boolean
   date?: Date
+  /** Date of the map data ("2026-10-25"), printed under the legend title when known. */
+  dataDate?: string | null
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -38,7 +40,7 @@ function formatScale(scale: number) {
   return `1:${scale.toLocaleString('en-US').replace(/,/g, ' ')}`
 }
 
-export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date = new Date() }: SheetSvgOptions): string {
+export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date = new Date(), dataDate }: SheetSvgOptions): string {
   const layout = sheetLayout(sheet)
   const { paper, frame } = layout
   const grid = sheetGrid(sheet)
@@ -64,19 +66,23 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
     parts.push(text(frame.x + frame.width / 2, frame.y + frame.height / 2, 'Rendering map…', 4, `text-anchor="middle" fill="#888"`))
   }
 
-  if (layers.grid) parts.push(renderGrid(layout, zones), renderSquareLabels(zones))
+  if (layers.grid) parts.push(renderGrid(layout, zones), renderFaceDigits(sheet, layout, zones), renderSquareLabels(zones))
   // The junction is shown even without the grid: it tells which zone's references apply where.
   parts.push(renderJunctions(zones))
   if (example) parts.push(renderExampleMarker(example, sheet, layout, grid))
   parts.push(`<rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" fill="none" stroke="${INK}" stroke-width="0.35"/>`)
 
+  // Each zone's grid has its own convergence, so its own grid–magnetic angle
+  const gridMagnetic = zones.zones
+    .map((z) => ({ zone: z.zone, angle: north.declination - convergenceAt(z.conv, sheet.center) }))
+    .sort((a, b) => a.zone - b.zone)
   const zoneNames = zones.zones.map((z) => z.zone).sort((a, b) => a - b).map((z) => `${z}${grid.south ? 'S' : 'N'}`)
   parts.push(renderHeader(sheet, layout, zones, zoneNames))
   for (const box of layout.blocks) {
-    if (box.id === 'legend') parts.push(renderLegend(box, palette, layers))
+    if (box.id === 'legend') parts.push(renderLegend(box, palette, layers, dataDate))
     if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, zoneNames, layers.contours))
-    if (box.id === 'north') parts.push(renderNorth(box, north))
-    if (box.id === 'squares') parts.push(renderSquaresBlock(box, sheet, layout, zones, north))
+    if (box.id === 'north') parts.push(renderNorth(box, north, gridMagnetic))
+    if (box.id === 'squares') parts.push(renderSquaresBlock(box, layout, zones, gridMagnetic))
     if (box.id === 'gridref') parts.push(renderGridRef(box, sheet, grid, example))
   }
   parts.push(renderFooter(layout, date))
@@ -389,6 +395,64 @@ function renderSquareLabels(zones: SheetZones) {
   return out.join('')
 }
 
+/**
+ * Principal digits repeated along the km lines on the map face, so the grid can be read away from the
+ * margin (e.g. on a folded sheet): eastings in a few rows across the sheet, northings in a few columns.
+ * Each sits midway between two lines of the other direction, never on a crossing, on a white patch
+ * that breaks its line. Lines of each zone are labelled in that zone's grid and kept clear of junctions.
+ * 100 km lines are left out: the square letters on both sides already mark them.
+ */
+function renderFaceDigits(sheet: Sheet, layout: SheetLayout, zones: SheetZones) {
+  const { frame } = layout
+  const spacing = GRID_SPACING[sheet.scale]
+  const SIZE = 2.2
+  const EVERY = 90 // mm between rows (and columns) of digits
+  const EDGE = 6 // keep clear of the edge labels
+  const spread = (start: number, length: number) => {
+    const count = Math.max(1, Math.round(length / EVERY))
+    return Array.from({ length: count }, (_, i) => start + (length * (i + 0.5)) / count)
+  }
+  const rows = spread(frame.y, frame.height)
+  const cols = spread(frame.x, frame.width)
+  const midway = (v: number) => (Math.floor(v / spacing) + 0.5) * spacing
+  const out: string[] = []
+
+  for (const z of zones.zones) {
+    // Grid coordinates of the paper point nearest to `target` on a line
+    const nearest = (run: Pt[], target: number, axis: 0 | 1) => run.reduce((best, p) => (Math.abs(p[axis] - target) < Math.abs(best[axis] - target) ? p : best))
+    const own = (p: Pt) => z.conv.forward(zones.toLonLat(p)) as Pt
+    const place = (e: number, n: number, value: number) => {
+      const [x, y] = zones.toPaper(z.conv.inverse([e, n]) as Pt)
+      const digits = splitDigits(value).principal
+      const w = textWidth(digits, SIZE) + 0.8
+      const h = SIZE * 0.95
+      // Corners with room around them, so digits stay a few mm clear of a zone junction
+      const PAD = 3
+      const corners: Pt[] = [
+        [x - w / 2 - PAD, y - h / 2 - PAD],
+        [x + w / 2 + PAD, y - h / 2 - PAD],
+        [x - w / 2 - PAD, y + h / 2 + PAD],
+        [x + w / 2 + PAD, y + h / 2 + PAD],
+      ]
+      const clear = corners.every(
+        ([cx, cy]) =>
+          cx > frame.x + EDGE && cx < frame.x + frame.width - EDGE && cy > frame.y + EDGE && cy < frame.y + frame.height - EDGE && zones.zoneAt([cx, cy]) === z.zone,
+      )
+      if (!clear) return
+      out.push(`<rect x="${f(x - w / 2)}" y="${f(y - h / 2)}" width="${f(w)}" height="${f(h)}" fill="#ffffff"/>`)
+      out.push(text(x, y + SIZE * 0.36, digits, SIZE, 'text-anchor="middle" font-weight="bold"'))
+    }
+    for (const l of z.lines) {
+      if (Math.round(l.value) % 1000 !== 0 || Math.round(l.value) % 100_000 === 0) continue
+      for (const run of l.runs) {
+        if (l.axis === 'e') for (const y of rows) place(l.value, midway(own(nearest(run, y, 1))[1]), l.value)
+        else for (const x of cols) place(midway(own(nearest(run, x, 0))[0]), l.value, l.value)
+      }
+    }
+  }
+  return out.join('')
+}
+
 /** Grid zone junctions: a heavy line, named along its length. */
 function renderJunctions(zones: SheetZones) {
   const out: string[] = []
@@ -442,7 +506,7 @@ function blockTitle(box: Box, label: string) {
   return text(box.x, box.y + 2.6, label, 2.4, 'font-weight="bold" letter-spacing="0.15"')
 }
 
-function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
+function renderLegend(box: Box, p: Palette, layers: SheetLayers, dataDate?: string | null) {
   type Item = { label: string; draw: (x: number, y: number, w: number, h: number) => string }
   const area = (fill: string, stroke = 'none') => (x: number, y: number, w: number, h: number) =>
     `<rect x="${f(x)}" y="${f(y)}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke === 'none' ? '#999' : stroke}" stroke-width="0.1"/>`
@@ -486,14 +550,17 @@ function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
   ]
 
   const out = [blockTitle(box, 'LEGEND')]
+  // The map information date: how current the mapped features are, as opposed to the print date
+  const top = dataDate ? 6.4 : 4.5
+  if (dataDate) out.push(text(box.x, box.y + 4.9, `Map information as of ${dataDate} (OpenStreetMap)`, 1.5, 'font-style="italic"'))
   const rows = Math.ceil(items.length / 2)
   const colWidth = box.width / 2
-  const rowHeight = (box.height - 4.5) / rows
+  const rowHeight = (box.height - top) / rows
   items.forEach((item, i) => {
     const col = Math.floor(i / rows)
     const row = i % rows
     const x = box.x + col * colWidth
-    const y = box.y + 4.5 + row * rowHeight
+    const y = box.y + top + row * rowHeight
     const swatchH = Math.min(2.4, rowHeight - 0.8)
     out.push(item.draw(x, y, 6, swatchH))
     out.push(text(x + 7.5, y + swatchH - 0.4, item.label, 2))
@@ -501,31 +568,51 @@ function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
   return out.join('')
 }
 
+/** Metres per yard and per statute mile. */
+const YARD = 0.9144
+const MILE = 1609.344
+
+/**
+ * Scale bars as chosen for the sheet: metric, imperial, or both with the imperial bar below and the zero
+ * points aligned. Imperial is in yards where the metric bar is in metres, in statute miles where it is in
+ * kilometres. Each has one subdivided unit left of zero and whole units to the right, and stays within
+ * the metric bar's 60 mm. A single bar gets the roomier spacing.
+ */
 function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours: boolean) {
   const out = [text(box.x + box.width / 2, box.y + 3.2, `SCALE ${formatScale(sheet.scale)}`, 3.4, 'text-anchor="middle" font-weight="bold"')]
+  const mmPerMetre = 1000 / sheet.scale
+  const both = sheet.scaleBars === 'both'
+  const barH = both ? 1.2 : 1.4
+  const zeroX = box.x + box.width / 2 - 10 // metric bar: 20 mm left of zero, 40 mm right
+  const cx = box.x + box.width / 2
 
-  // Scale bar: one subdivided unit to the left of zero, two whole units to the right. 1 unit = 20 mm.
+  /** One bar: `unit` in metres, labelled with `fmt`; the left unit is split in five. */
+  const bar = (y: number, unit: number, right: number, fmt: (units: number) => string, name: string) => {
+    const unitMm = unit * mmPerMetre
+    const left = zeroX - unitMm
+    for (let i = 0; i < 5; i++) {
+      out.push(`<rect x="${f(left + (i * unitMm) / 5)}" y="${f(y)}" width="${f(unitMm / 5)}" height="${barH}" fill="${i % 2 ? '#fff' : INK}" stroke="${INK}" stroke-width="0.1"/>`)
+    }
+    for (let i = 0; i < right; i++) {
+      out.push(`<rect x="${f(zeroX + unitMm * i)}" y="${f(y)}" width="${f(unitMm)}" height="${barH}" fill="${i % 2 ? INK : '#fff'}" stroke="${INK}" stroke-width="0.1"/>`)
+    }
+    const labelY = y + barH + (both ? 2.2 : 2.4)
+    const size = both ? 1.8 : 2
+    out.push(text(left, labelY, fmt(1), size, 'text-anchor="middle"'))
+    for (let i = 0; i <= right; i++) out.push(text(zeroX + unitMm * i, labelY, fmt(i), size, 'text-anchor="middle"'))
+    out.push(text(cx, labelY + (both ? 2.3 : 2.8), name, both ? 1.6 : 1.9, 'text-anchor="middle" letter-spacing="0.2"'))
+  }
+
   const unit = sheet.scale / 50 // metres per 20 mm
-  const unitMm = 20
-  const barH = 1.4
-  const x0 = box.x + (box.width - 3 * unitMm) / 2
-  const y0 = box.y + 7.5
   const km = unit >= 1000
-  const fmt = (m: number) => (km ? String(m / 1000) : String(m))
-  for (let i = 0; i < 5; i++) {
-    out.push(`<rect x="${f(x0 + (i * unitMm) / 5)}" y="${f(y0)}" width="${unitMm / 5}" height="${barH}" fill="${i % 2 ? '#fff' : INK}" stroke="${INK}" stroke-width="0.1"/>`)
-  }
-  for (let i = 0; i < 2; i++) {
-    out.push(`<rect x="${f(x0 + unitMm * (i + 1))}" y="${f(y0)}" width="${unitMm}" height="${barH}" fill="${i % 2 ? INK : '#fff'}" stroke="${INK}" stroke-width="0.1"/>`)
-  }
-  const labels: [number, string][] = [
-    [x0, fmt(unit)],
-    [x0 + unitMm, '0'],
-    [x0 + 2 * unitMm, fmt(unit)],
-    [x0 + 3 * unitMm, fmt(2 * unit)],
-  ]
-  for (const [x, l] of labels) out.push(text(x, y0 + barH + 2.4, l, 2, 'text-anchor="middle"'))
-  out.push(text(box.x + box.width / 2, y0 + barH + 5.2, km ? 'KILOMETRES' : 'METRES', 1.9, 'text-anchor="middle" letter-spacing="0.2"'))
+  const imperial =
+    sheet.scale <= 10_000
+      ? { unit: 100 * YARD, right: 4, fmt: (i: number) => String(i * 100), name: 'YARDS' }
+      : km
+        ? { unit: 0.5 * MILE, right: 2, fmt: (i: number) => String(i * 0.5), name: 'STATUTE MILES' }
+        : { unit: 500 * YARD, right: 2, fmt: (i: number) => String(i * 500), name: 'YARDS' }
+  if (sheet.scaleBars !== 'imperial') bar(both ? box.y + 5.6 : box.y + 7.5, unit, 2, (i) => String((i * unit) / (km ? 1000 : 1)), km ? 'KILOMETRES' : 'METRES')
+  if (sheet.scaleBars !== 'metric') bar(both ? box.y + 12.6 : box.y + 7.5, imperial.unit, imperial.right, imperial.fmt, imperial.name)
 
   // The contour lines (first one bold) are left out when contours are switched off.
   const contourNotes = contours ? [`CONTOUR INTERVAL ${CONTOUR_INTERVAL[sheet.scale]} METRES`, 'Elevations in metres above mean sea level'] : []
@@ -537,14 +624,22 @@ function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours:
   ]
   notes.forEach((n, i) => {
     const bold = contours && i === 0
-    out.push(text(box.x + box.width / 2, y0 + barH + 10 + i * 2.9, n, bold ? 2.2 : 1.9, `text-anchor="middle"${bold ? ' font-weight="bold"' : ''}`))
+    const y = both ? box.y + 22.6 + i * 2.5 : box.y + 18.9 + i * 2.9
+    const size = both ? (bold ? 2.1 : 1.8) : bold ? 2.2 : 1.9
+    out.push(text(cx, y, n, size, `text-anchor="middle"${bold ? ' font-weight="bold"' : ''}`))
   })
   return out.join('')
 }
 
-function renderNorth(box: Box, info: NorthInfo) {
+/** Grid–magnetic angle of one zone's grid at the sheet centre, degrees, east positive. */
+interface ZoneAngle {
+  zone: number
+  angle: number
+}
+
+function renderNorth(box: Box, info: NorthInfo, gridMagnetic: ZoneAngle[]) {
   const out = [blockTitle(box, 'NORTH POINTS')]
-  const cx = box.x + box.width / 2
+  const cx = box.x + 10
   const baseY = box.y + 20
   const len = 13
   // Small angles are drawn exaggerated so the three norths can be told apart.
@@ -559,8 +654,17 @@ function renderNorth(box: Box, info: NorthInfo) {
     if (Math.abs(mnTrue) >= Math.abs(tnTrue)) mnAngle = tnAngle + (Math.sign(mnTrue - tnTrue) || 1) * MIN
     else tnAngle = mnAngle + (Math.sign(tnTrue - mnTrue) || 1) * MIN
   }
-  const exaggerated = Math.abs(tnAngle - tnTrue) > 0.05 || Math.abs(mnAngle - mnTrue) > 0.05
   const tip = (deg: number, l = len): [number, number] => [cx + Math.sin((deg * Math.PI) / 180) * l, baseY - Math.cos((deg * Math.PI) / 180) * l]
+
+  // Dashed arcs between the prongs: grid–magnetic angle (GN–MN) outside, convergence (TN–GN) inside
+  const arc = (from: number, to: number, r: number) => {
+    if (Math.abs(to - from) < 0.05) return ''
+    const [x0, y0] = tip(from, r)
+    const [x1, y1] = tip(to, r)
+    // Angles run clockwise from grid north, which is the positive sweep direction with y down
+    return `<path d="M${f(x0)} ${f(y0)} A${r} ${r} 0 0 ${to > from ? 1 : 0} ${f(x1)} ${f(y1)}" fill="none" stroke="${INK}" stroke-width="0.15" stroke-dasharray="0.8 0.5"/>`
+  }
+  out.push(arc(0, mnAngle, 11), arc(tnAngle, 0, 8))
 
   // Grid north: vertical line labelled GN
   out.push(line(cx, baseY, cx, baseY - len, 0.25))
@@ -582,16 +686,34 @@ function renderNorth(box: Box, info: NorthInfo) {
   const tnSide = tnAngle > 0 ? 1 : -1
   out.push(text(tx + tnSide * 1.6, ty + 0.2, 'TN', 1.6, `text-anchor="${tnSide > 0 ? 'start' : 'end'}"`))
 
-  const lines = [
+  // Key under the diagram
+  const key = ['GN grid north', 'TN true north', 'MN magnetic north']
+  key.forEach((k, i) => out.push(text(box.x, baseY + 2.8 + i * 2, k, 1.4, 'font-style="italic"')))
+  // The prongs are not to scale (small angles are exaggerated): the values beside the diagram count
+  const caution = ['Use diagram only to obtain', 'numerical values']
+  caution.forEach((c, i) => out.push(text(box.x, baseY + 3.2 + (key.length + i) * 2, c, 1.4, 'font-weight="bold" font-style="italic"')))
+
+  // Values, then how to convert azimuths with the grid–magnetic angle: with magnetic north east of grid
+  // north, a magnetic azimuth is smaller than the grid azimuth, so grid to magnetic subtracts.
+  const x = box.x + 21
+  const values = [
     `Convergence: ${formatAngle(info.convergence)}`,
     `Declination: ${formatAngle(info.declination)}`,
     `G–M angle: ${formatAngle(info.gridMagnetic)}`,
     `Annual change ${Math.abs(info.annualChange).toFixed(2)}° ${info.annualChange >= 0 ? 'E' : 'W'} · ${info.year}`,
   ]
-  // Key to the abbreviations, then the values
-  out.push(text(box.x, baseY + 2.8, 'GN grid · TN true · MN magnetic north', 1.5, 'font-style="italic"'))
-  lines.forEach((l, i) => out.push(text(box.x, baseY + 5.2 + i * 2.2, l, 1.6)))
-  if (exaggerated) out.push(text(box.x, box.y + 5, 'Angles not to scale', 1.4, 'font-style="italic"'))
+  values.forEach((v, i) => out.push(text(x, box.y + 5.5 + i * 2.2, esc(v), 1.6)))
+  const amount = (a: number) => `${Math.abs(a).toFixed(1)}° (${Math.abs(toMils(a))} mils)`
+  const perZone = gridMagnetic.length > 1
+  const conversion = (title: string, eastOp: string, westOp: string) => [
+    title,
+    ...gridMagnetic.map((z) => `${perZone ? `zone ${z.zone}: ` : ''}${z.angle >= 0 ? eastOp : westOp} ${amount(z.angle)}`),
+  ]
+  const notes = [...conversion('Grid to magnetic azimuth:', 'subtract', 'add'), ...conversion('Magnetic to grid azimuth:', 'add', 'subtract')]
+  notes.forEach((n, i) => {
+    const heading = n.endsWith(':')
+    out.push(text(heading ? x : x + 1.5, box.y + 15.2 + i * 2.2, esc(n), 1.6, heading ? 'font-weight="bold"' : ''))
+  })
   return out.join('')
 }
 
@@ -609,7 +731,7 @@ function star(cx: number, cy: number, r: number) {
  * The grid zone designation and 100 km square identification: a small diagram of the sheet divided
  * into its 100 km squares (and grid zones), and the grid–magnetic angle of each zone's grid.
  */
-function renderSquaresBlock(box: Box, sheet: Sheet, layout: SheetLayout, zones: SheetZones, north: NorthInfo) {
+function renderSquaresBlock(box: Box, layout: SheetLayout, zones: SheetZones, gridMagnetic: ZoneAngle[]) {
   const { frame } = layout
   const out = [blockTitle(box, '100 KM SQUARES')]
   const gzds = [...new Set(zones.regions.map((r) => r.gzd))].sort()
@@ -702,12 +824,7 @@ function renderSquaresBlock(box: Box, sheet: Sheet, layout: SheetLayout, zones: 
   }
 
   const notes = [`Grid zone designation: ${gzds.join(', ')}`]
-  if (zones.zones.length > 1) {
-    // Each zone's grid has its own convergence, so its own grid–magnetic angle
-    for (const z of [...zones.zones].sort((a, b) => a.zone - b.zone)) {
-      notes.push(`G–M zone ${z.zone}: ${formatAngle(north.declination - convergenceAt(z.conv, sheet.center))}`)
-    }
-  }
+  if (gridMagnetic.length > 1) for (const z of gridMagnetic) notes.push(`G–M zone ${z.zone}: ${formatAngle(z.angle)}`)
   notes.forEach((n, i) => out.push(text(box.x, oy + h + 2.8 + i * 2.3, esc(n), 1.6)))
   return out.join('')
 }
@@ -766,6 +883,29 @@ function renderGridRef(box: Box, sheet: Sheet, grid: Grid, example: ResolvedExam
     ['Grid reference', `${square} ${E.ref} ${N.ref}`.trim()],
     ['Full MGRS reference', `${gzdSquare} ${E.ref} ${N.ref}`],
   ]
+  // The sample grid square, between the steps and their values: its lines labelled as on the map,
+  // tenths ticked along the bottom and left, and the point with dashed lines to the ticks it reads.
+  // The point is drawn in the middle of its tenth, so the dashed lines land between the two ticks.
+  const S = 12
+  const sx = box.x + 29
+  const sy = box.y + 8.5
+  const next = (label: string) => String((Number(label) + 1) % 10 ** lineDigits).padStart(lineDigits, '0')
+  const px = sx + ((E.tenth + 0.5) / 10) * S
+  const py = sy + S - ((N.tenth + 0.5) / 10) * S
+  out.push(`<rect x="${f(sx)}" y="${f(sy)}" width="${S}" height="${S}" fill="none" stroke="${INK}" stroke-width="0.25"/>`)
+  for (let i = 1; i < 10; i++) {
+    const t = (i * S) / 10
+    const len = i === 5 ? 1 : 0.6
+    out.push(line(sx + t, sy + S, sx + t, sy + S - len, 0.12), line(sx, sy + S - t, sx + len, sy + S - t, 0.12))
+  }
+  const dash = 'stroke-dasharray="0.5 0.35"'
+  out.push(line(px, py, px, sy + S, 0.12, dash), line(px, py, sx, py, 0.12, dash))
+  out.push(`<circle cx="${f(px)}" cy="${f(py)}" r="0.55" fill="none" stroke="${INK}" stroke-width="0.2"/><circle cx="${f(px)}" cy="${f(py)}" r="0.15" fill="${INK}"/>`)
+  out.push(text(sx, sy + S + 2.6, E.lineLabel, 1.7, 'text-anchor="middle" font-weight="bold"'))
+  out.push(text(sx + S, sy + S + 2.6, next(E.lineLabel), 1.7, 'text-anchor="middle" font-weight="bold"'))
+  out.push(text(sx - 1.2, sy + S + 0.3, N.lineLabel, 1.7, 'text-anchor="end" font-weight="bold"'))
+  out.push(text(sx - 1.2, sy + 0.6, next(N.lineLabel), 1.7, 'text-anchor="end" font-weight="bold"'))
+
   const valueX = box.x + box.width
   rows.forEach(([label, value], i) => {
     const y = box.y + 6 + i * 2.75
