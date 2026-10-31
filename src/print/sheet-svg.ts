@@ -856,6 +856,29 @@ function renderGridRef(box: Box, sheet: Sheet, grid: Grid, example: ResolvedExam
     ['Grid reference', `${square} ${E.ref} ${N.ref}`.trim()],
     ['Full MGRS reference', `${gzdSquare} ${E.ref} ${N.ref}`],
   ]
+  // The sample grid square, between the steps and their values: its lines labelled as on the map,
+  // tenths ticked along the bottom and left, and the point with dashed lines to the ticks it reads.
+  // The point is drawn in the middle of its tenth, so the dashed lines land between the two ticks.
+  const S = 12
+  const sx = box.x + 29
+  const sy = box.y + 8.5
+  const next = (label: string) => String((Number(label) + 1) % 10 ** lineDigits).padStart(lineDigits, '0')
+  const px = sx + ((E.tenth + 0.5) / 10) * S
+  const py = sy + S - ((N.tenth + 0.5) / 10) * S
+  out.push(`<rect x="${f(sx)}" y="${f(sy)}" width="${S}" height="${S}" fill="none" stroke="${INK}" stroke-width="0.25"/>`)
+  for (let i = 1; i < 10; i++) {
+    const t = (i * S) / 10
+    const len = i === 5 ? 1 : 0.6
+    out.push(line(sx + t, sy + S, sx + t, sy + S - len, 0.12), line(sx, sy + S - t, sx + len, sy + S - t, 0.12))
+  }
+  const dash = 'stroke-dasharray="0.5 0.35"'
+  out.push(line(px, py, px, sy + S, 0.12, dash), line(px, py, sx, py, 0.12, dash))
+  out.push(`<circle cx="${f(px)}" cy="${f(py)}" r="0.55" fill="none" stroke="${INK}" stroke-width="0.2"/><circle cx="${f(px)}" cy="${f(py)}" r="0.15" fill="${INK}"/>`)
+  out.push(text(sx, sy + S + 2.6, E.lineLabel, 1.7, 'text-anchor="middle" font-weight="bold"'))
+  out.push(text(sx + S, sy + S + 2.6, next(E.lineLabel), 1.7, 'text-anchor="middle" font-weight="bold"'))
+  out.push(text(sx - 1.2, sy + S + 0.3, N.lineLabel, 1.7, 'text-anchor="end" font-weight="bold"'))
+  out.push(text(sx - 1.2, sy + 0.6, next(N.lineLabel), 1.7, 'text-anchor="end" font-weight="bold"'))
+
   const valueX = box.x + box.width
   rows.forEach(([label, value], i) => {
     const y = box.y + 6 + i * 2.75
