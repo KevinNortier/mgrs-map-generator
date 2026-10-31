@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { mapDataDate } from '../map/data-date'
 import type { Palette } from '../map/style'
 import { renderMapImage } from '../print/render-map'
 import { download, exportFileName, exportPdf, exportPng } from '../print/export'
@@ -44,9 +45,9 @@ function onKey(e: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   try {
-    const mapImage = await renderMapImage(sheet, props.palette, { dpi: PREVIEW_DPI })
+    const [mapImage, dataDate] = await Promise.all([renderMapImage(sheet, props.palette, { dpi: PREVIEW_DPI }), mapDataDate()])
     if (closed) return
-    svg.value = renderSheetSvg({ sheet, palette: props.palette, mapImage })
+    svg.value = renderSheetSvg({ sheet, palette: props.palette, mapImage, dataDate })
     status.value = 'done'
   } catch (e) {
     status.value = 'error'

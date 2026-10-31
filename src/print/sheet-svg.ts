@@ -21,6 +21,8 @@ export interface SheetSvgOptions {
   /** Only the vector overlay (no paper background or map image), for drawing on top of a separately placed map. */
   overlay?: boolean
   date?: Date
+  /** Date of the map data ("2026-10-25"), printed under the legend title when known. */
+  dataDate?: string | null
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -38,7 +40,7 @@ function formatScale(scale: number) {
   return `1:${scale.toLocaleString('en-US').replace(/,/g, ' ')}`
 }
 
-export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date = new Date() }: SheetSvgOptions): string {
+export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date = new Date(), dataDate }: SheetSvgOptions): string {
   const layout = sheetLayout(sheet)
   const { paper, frame } = layout
   const grid = sheetGrid(sheet)
@@ -77,7 +79,7 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
   const zoneNames = zones.zones.map((z) => z.zone).sort((a, b) => a - b).map((z) => `${z}${grid.south ? 'S' : 'N'}`)
   parts.push(renderHeader(sheet, layout, zones, zoneNames))
   for (const box of layout.blocks) {
-    if (box.id === 'legend') parts.push(renderLegend(box, palette, layers))
+    if (box.id === 'legend') parts.push(renderLegend(box, palette, layers, dataDate))
     if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, zoneNames, layers.contours))
     if (box.id === 'north') parts.push(renderNorth(box, north, gridMagnetic))
     if (box.id === 'squares') parts.push(renderSquaresBlock(box, layout, zones, gridMagnetic))
@@ -504,7 +506,7 @@ function blockTitle(box: Box, label: string) {
   return text(box.x, box.y + 2.6, label, 2.4, 'font-weight="bold" letter-spacing="0.15"')
 }
 
-function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
+function renderLegend(box: Box, p: Palette, layers: SheetLayers, dataDate?: string | null) {
   type Item = { label: string; draw: (x: number, y: number, w: number, h: number) => string }
   const area = (fill: string, stroke = 'none') => (x: number, y: number, w: number, h: number) =>
     `<rect x="${f(x)}" y="${f(y)}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke === 'none' ? '#999' : stroke}" stroke-width="0.1"/>`
@@ -548,14 +550,17 @@ function renderLegend(box: Box, p: Palette, layers: SheetLayers) {
   ]
 
   const out = [blockTitle(box, 'LEGEND')]
+  // The map information date: how current the mapped features are, as opposed to the print date
+  const top = dataDate ? 6.4 : 4.5
+  if (dataDate) out.push(text(box.x, box.y + 4.9, `Map information as of ${dataDate} (OpenStreetMap)`, 1.5, 'font-style="italic"'))
   const rows = Math.ceil(items.length / 2)
   const colWidth = box.width / 2
-  const rowHeight = (box.height - 4.5) / rows
+  const rowHeight = (box.height - top) / rows
   items.forEach((item, i) => {
     const col = Math.floor(i / rows)
     const row = i % rows
     const x = box.x + col * colWidth
-    const y = box.y + 4.5 + row * rowHeight
+    const y = box.y + top + row * rowHeight
     const swatchH = Math.min(2.4, rowHeight - 0.8)
     out.push(item.draw(x, y, 6, swatchH))
     out.push(text(x + 7.5, y + swatchH - 0.4, item.label, 2))

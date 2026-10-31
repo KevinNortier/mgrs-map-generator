@@ -16,7 +16,7 @@ orienteering and land navigation training. It is a static site: no backend, data
 **Sheet**
 - Print area on the map: A4 or A3, portrait or landscape, 1:10 000 / 1:25 000 / 1:50 000, moved with a drag handle
 - The frame is a rectangle in the UTM grid of its zone, so the printed grid is square to the paper (grid north up)
-- Margin information: title, 100 km square(s), datum and zone; MGRS grid labels with full values near the corners; legend; scale bar; contour interval; north diagram with grid convergence, magnetic declination (WMM2025), grid–magnetic angle and annual change, in degrees and mils; "How to give a grid reference" box; attribution
+- Margin information: title, 100 km square(s), datum and zone; MGRS grid labels with full values near the corners, and principal digits repeated along the grid lines on the map; legend with the date of the map data; scale bar; contour interval; north points diagram with grid convergence, magnetic declination (WMM2025), grid–magnetic angle and annual change in degrees and mils, and grid ↔ magnetic azimuth conversion notes; "How to give a grid reference" box with a drawing of the sample grid square; attribution
 - Zone junctions and 100 km squares as on NATO sheets: where a grid zone junction crosses the sheet, each zone's grid is drawn only within its own zone (meeting at an angle at the labelled junction line, with its own edge figures), so every grid line gives a true MGRS reference; 100 km square letters on both sides of square boundaries; a "100 km squares" diagram with the grid zone designation and the grid–magnetic angle per zone
 - Optional worked grid reference example: off (default), the map centre, or a custom named point
 

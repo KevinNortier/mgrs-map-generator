@@ -1,5 +1,6 @@
 import type { Palette } from '../map/style'
 import { mgrsAt } from '../mgrs/grid'
+import { mapDataDate } from '../map/data-date'
 import { renderMapImage } from './render-map'
 import { renderSheetSvg } from './sheet-svg'
 import { sheetLayout, type Sheet } from './sheet'
@@ -31,9 +32,10 @@ export function exportFileName(sheet: Sheet, ext: 'pdf' | 'png' | 'json') {
  * frame size, and the grid, text and margin graphics are drawn on top as vectors.
  */
 export async function exportPdf(sheet: Sheet, palette: Palette, onProgress?: ExportProgress): Promise<Blob> {
-  const [{ jsPDF }, mapImage] = await Promise.all([
+  const [{ jsPDF }, mapImage, dataDate] = await Promise.all([
     import('jspdf'),
     renderMapImage(sheet, palette, { dpi: EXPORT_DPI, format: 'image/jpeg', onProgress: mapProgress(onProgress) }),
+    mapDataDate(),
   ])
   await import('svg2pdf.js')
   onProgress?.('Building PDF…')
@@ -53,7 +55,7 @@ export async function exportPdf(sheet: Sheet, palette: Palette, onProgress?: Exp
   doc.addImage(mapImage, 'JPEG', frame.x, frame.y, frame.width, frame.height, undefined, 'NONE')
 
   // svg2pdf needs a parsed SVG element; it does not have to be attached to the page.
-  const svg = new DOMParser().parseFromString(renderSheetSvg({ sheet, palette, overlay: true }), 'image/svg+xml').documentElement
+  const svg = new DOMParser().parseFromString(renderSheetSvg({ sheet, palette, overlay: true, dataDate }), 'image/svg+xml').documentElement
   await doc.svg(svg, { x: 0, y: 0, width: paper.width, height: paper.height })
   return doc.output('blob')
 }
@@ -61,11 +63,14 @@ export async function exportPdf(sheet: Sheet, palette: Palette, onProgress?: Exp
 /** The whole sheet as a PNG at EXPORT_DPI, tagged with its resolution so it prints at the right size. */
 export async function exportPng(sheet: Sheet, palette: Palette, onProgress?: ExportProgress): Promise<Blob> {
   // JPEG keeps the embedded map small; a lossless A3 map at 300 DPI is tens of MB as a data URL.
-  const mapImage = await renderMapImage(sheet, palette, { dpi: EXPORT_DPI, format: 'image/jpeg', onProgress: mapProgress(onProgress) })
+  const [mapImage, dataDate] = await Promise.all([
+    renderMapImage(sheet, palette, { dpi: EXPORT_DPI, format: 'image/jpeg', onProgress: mapProgress(onProgress) }),
+    mapDataDate(),
+  ])
   onProgress?.('Building PNG…')
 
   const { paper } = sheetLayout(sheet)
-  const svgText = renderSheetSvg({ sheet, palette, mapImage })
+  const svgText = renderSheetSvg({ sheet, palette, mapImage, dataDate })
   const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml' }))
   try {
     const img = new Image()
