@@ -1,7 +1,7 @@
 import { forward as toMgrs } from 'mgrs'
 import type { Palette, SheetLayers } from '../map/style'
 import { formatMgrs, utm, zoneFor } from '../mgrs/grid'
-import { convergenceAt, formatAngle, northInfo, type NorthInfo } from './north'
+import { convergenceAt, formatAngle, northInfo, toMils, type NorthInfo } from './north'
 import { sheetZones, type Pt, type SheetZones, type SquareRegion } from './sheet-zones'
 import { resolveExample, type ResolvedExample } from './example'
 import { CONTOUR_INTERVAL, GRID_SPACING, sheetGrid, sheetLayout, type Sheet, type SheetLayout } from './sheet'
@@ -70,13 +70,17 @@ export function renderSheetSvg({ sheet, palette, mapImage, overlay = false, date
   if (example) parts.push(renderExampleMarker(example, sheet, layout, grid))
   parts.push(`<rect x="${frame.x}" y="${frame.y}" width="${frame.width}" height="${frame.height}" fill="none" stroke="${INK}" stroke-width="0.35"/>`)
 
+  // Each zone's grid has its own convergence, so its own grid–magnetic angle
+  const gridMagnetic = zones.zones
+    .map((z) => ({ zone: z.zone, angle: north.declination - convergenceAt(z.conv, sheet.center) }))
+    .sort((a, b) => a.zone - b.zone)
   const zoneNames = zones.zones.map((z) => z.zone).sort((a, b) => a - b).map((z) => `${z}${grid.south ? 'S' : 'N'}`)
   parts.push(renderHeader(sheet, layout, zones, zoneNames))
   for (const box of layout.blocks) {
     if (box.id === 'legend') parts.push(renderLegend(box, palette, layers))
     if (box.id === 'scale') parts.push(renderScaleBlock(box, sheet, zoneNames, layers.contours))
-    if (box.id === 'north') parts.push(renderNorth(box, north))
-    if (box.id === 'squares') parts.push(renderSquaresBlock(box, sheet, layout, zones, north))
+    if (box.id === 'north') parts.push(renderNorth(box, north, gridMagnetic))
+    if (box.id === 'squares') parts.push(renderSquaresBlock(box, layout, zones, gridMagnetic))
     if (box.id === 'gridref') parts.push(renderGridRef(box, sheet, grid, example))
   }
   parts.push(renderFooter(layout, date))
@@ -542,9 +546,15 @@ function renderScaleBlock(box: Box, sheet: Sheet, zoneNames: string[], contours:
   return out.join('')
 }
 
-function renderNorth(box: Box, info: NorthInfo) {
+/** Grid–magnetic angle of one zone's grid at the sheet centre, degrees, east positive. */
+interface ZoneAngle {
+  zone: number
+  angle: number
+}
+
+function renderNorth(box: Box, info: NorthInfo, gridMagnetic: ZoneAngle[]) {
   const out = [blockTitle(box, 'NORTH POINTS')]
-  const cx = box.x + box.width / 2
+  const cx = box.x + 10
   const baseY = box.y + 20
   const len = 13
   // Small angles are drawn exaggerated so the three norths can be told apart.
@@ -582,16 +592,32 @@ function renderNorth(box: Box, info: NorthInfo) {
   const tnSide = tnAngle > 0 ? 1 : -1
   out.push(text(tx + tnSide * 1.6, ty + 0.2, 'TN', 1.6, `text-anchor="${tnSide > 0 ? 'start' : 'end'}"`))
 
-  const lines = [
+  // Key under the diagram
+  const key = ['GN grid north', 'TN true north', 'MN magnetic north']
+  key.forEach((k, i) => out.push(text(box.x, baseY + 2.8 + i * 2, k, 1.4, 'font-style="italic"')))
+  if (exaggerated) out.push(text(box.x, baseY + 2.8 + key.length * 2 + 0.4, 'Angles not to scale', 1.4, 'font-style="italic"'))
+
+  // Values, then how to convert azimuths with the grid–magnetic angle: with magnetic north east of grid
+  // north, a magnetic azimuth is smaller than the grid azimuth, so grid to magnetic subtracts.
+  const x = box.x + 21
+  const values = [
     `Convergence: ${formatAngle(info.convergence)}`,
     `Declination: ${formatAngle(info.declination)}`,
     `G–M angle: ${formatAngle(info.gridMagnetic)}`,
     `Annual change ${Math.abs(info.annualChange).toFixed(2)}° ${info.annualChange >= 0 ? 'E' : 'W'} · ${info.year}`,
   ]
-  // Key to the abbreviations, then the values
-  out.push(text(box.x, baseY + 2.8, 'GN grid · TN true · MN magnetic north', 1.5, 'font-style="italic"'))
-  lines.forEach((l, i) => out.push(text(box.x, baseY + 5.2 + i * 2.2, l, 1.6)))
-  if (exaggerated) out.push(text(box.x, box.y + 5, 'Angles not to scale', 1.4, 'font-style="italic"'))
+  values.forEach((v, i) => out.push(text(x, box.y + 5.5 + i * 2.2, esc(v), 1.6)))
+  const amount = (a: number) => `${Math.abs(a).toFixed(1)}° (${Math.abs(toMils(a))} mils)`
+  const perZone = gridMagnetic.length > 1
+  const conversion = (title: string, eastOp: string, westOp: string) => [
+    title,
+    ...gridMagnetic.map((z) => `${perZone ? `zone ${z.zone}: ` : ''}${z.angle >= 0 ? eastOp : westOp} ${amount(z.angle)}`),
+  ]
+  const notes = [...conversion('Grid to magnetic azimuth:', 'subtract', 'add'), ...conversion('Magnetic to grid azimuth:', 'add', 'subtract')]
+  notes.forEach((n, i) => {
+    const heading = n.endsWith(':')
+    out.push(text(heading ? x : x + 1.5, box.y + 15.2 + i * 2.2, esc(n), 1.6, heading ? 'font-weight="bold"' : ''))
+  })
   return out.join('')
 }
 
@@ -609,7 +635,7 @@ function star(cx: number, cy: number, r: number) {
  * The grid zone designation and 100 km square identification: a small diagram of the sheet divided
  * into its 100 km squares (and grid zones), and the grid–magnetic angle of each zone's grid.
  */
-function renderSquaresBlock(box: Box, sheet: Sheet, layout: SheetLayout, zones: SheetZones, north: NorthInfo) {
+function renderSquaresBlock(box: Box, layout: SheetLayout, zones: SheetZones, gridMagnetic: ZoneAngle[]) {
   const { frame } = layout
   const out = [blockTitle(box, '100 KM SQUARES')]
   const gzds = [...new Set(zones.regions.map((r) => r.gzd))].sort()
@@ -702,12 +728,7 @@ function renderSquaresBlock(box: Box, sheet: Sheet, layout: SheetLayout, zones: 
   }
 
   const notes = [`Grid zone designation: ${gzds.join(', ')}`]
-  if (zones.zones.length > 1) {
-    // Each zone's grid has its own convergence, so its own grid–magnetic angle
-    for (const z of [...zones.zones].sort((a, b) => a.zone - b.zone)) {
-      notes.push(`G–M zone ${z.zone}: ${formatAngle(north.declination - convergenceAt(z.conv, sheet.center))}`)
-    }
-  }
+  if (gridMagnetic.length > 1) for (const z of gridMagnetic) notes.push(`G–M zone ${z.zone}: ${formatAngle(z.angle)}`)
   notes.forEach((n, i) => out.push(text(box.x, oy + h + 2.8 + i * 2.3, esc(n), 1.6)))
   return out.join('')
 }

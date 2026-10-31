@@ -38,11 +38,11 @@ export const GRID_SPACING: Record<Scale, number> = { 10_000: 100, 25_000: 1_000,
 /** Marginal information blocks below the map frame, in layout order. Sizes in mm. */
 export type BlockId = 'legend' | 'scale' | 'north' | 'squares' | 'gridref'
 const BLOCKS: { id: BlockId; width: number }[] = [
-  { id: 'legend', width: 62 },
-  { id: 'scale', width: 66 },
-  { id: 'north', width: 34 },
+  { id: 'legend', width: 56 },
+  { id: 'scale', width: 64 },
+  { id: 'north', width: 48 },
   { id: 'squares', width: 34 },
-  { id: 'gridref', width: 62 },
+  { id: 'gridref', width: 56 },
 ]
 export const BLOCK_HEIGHT = 34
 const BLOCK_GAP = 4
